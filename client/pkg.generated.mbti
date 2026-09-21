@@ -1,0 +1,38 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "yuebingo/spoa/client"
+
+import {
+  "moonbitlang/async/io",
+  "yuebingo/spoa/spop",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct Client {
+  supported_versions : Array[String]
+  max_frame_size : UInt
+  capabilities : Array[String]
+  engine_id : String?
+  reader : &@io.Reader
+  writer : &@io.Writer
+  mut version : String
+  mut peer_max_frame_size : UInt
+  mut peer_capabilities : Array[String]
+  stream_id : UInt64
+  mut frame_id : UInt64
+}
+pub async fn Client::disconnect(Self, status? : @spop.StatusCode, message? : String) -> (@spop.StatusCode, String)
+pub async fn Client::hello(&@io.Reader, &@io.Writer, supported_versions? : Array[String], max_frame_size? : UInt, capabilities? : Array[String], engine_id? : String?, healthcheck? : Bool) -> Self
+pub fn Client::next_ids(Self) -> (UInt64, UInt64)
+pub async fn Client::notify(Self, UInt64, UInt64, Array[@spop.Message]) -> Array[@spop.Action]
+pub fn Client::peer_capabilities(Self) -> Array[String]
+pub fn Client::peer_max_frame_size(Self) -> UInt
+pub fn Client::pipelining(Self) -> Bool
+pub fn Client::version(Self) -> String
+
+// Type aliases
+
+// Traits

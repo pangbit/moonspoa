@@ -1,0 +1,15 @@
+// SPOE client: the HAProxy/engine side of the SPOP protocol.
+// IO-agnostic: it runs over any `&@io.Reader + &@io.Writer` pair.
+// Also serves as the peer driver in agent/server tests.
+
+warnings = "-79"
+
+import {
+  "yuebingo/spoa/spop",
+  "moonbitlang/async/io",
+}
+
+import {
+  "yuebingo/spoa/agent",
+  "moonbitlang/async",
+} for "test"
