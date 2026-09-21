@@ -1,0 +1,33 @@
+// SPOA server transport (native only): TCP and Unix domain socket
+// listeners that hand connections to agent sessions.
+//
+// NOTE: moonbitlang/async@0.22.1 has no public Unix-domain-socket API and
+// its `internal/*` packages cannot be imported from another module
+// (internal visibility is enforced by the toolchain). This package
+// therefore creates UDS sockets in a C stub (`uds.c`) and registers the
+// resulting fds with the event loop through the public
+// `moonbitlang/async/raw_fd` package. Because no public API exposes
+// `accept` readiness, the UDS accept loop polls with a short sleep
+// interval (see `accept_poll_interval_ms`); swap in an event-driven
+// accept if upstream later exposes one.
+
+warnings = "-79"
+
+supported_targets = "native"
+
+import {
+  "yuebingo/spoa/agent",
+  "moonbitlang/async",
+  "moonbitlang/async/socket",
+  "moonbitlang/async/raw_fd",
+  "moonbitlang/core/encoding/utf8",
+}
+
+import {
+  "yuebingo/spoa/client",
+  "moonbitlang/async/fs",
+} for "test"
+
+options(
+  "native-stub": [ "uds.c" ],
+)

@@ -1,0 +1,42 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "yuebingo/spoa/server"
+
+import {
+  "moonbitlang/async/raw_fd",
+  "moonbitlang/async/socket",
+  "moonbitlang/core/debug",
+  "yuebingo/spoa/agent",
+}
+
+// Values
+pub async fn connect_unix(String) -> @raw_fd.RawFdStream
+
+// Errors
+pub suberror ServerError {
+  UdsListen(path~ : String, errno~ : Int)
+  UdsAccept(errno~ : Int)
+  UdsConnect(path~ : String, errno~ : Int)
+} derive(@debug.Debug)
+
+// Types and methods
+pub(all) enum Listener {
+  Tcp(@socket.Addr)
+  Unix(String)
+}
+pub fn Listener::tcp(String) -> Self raise
+
+pub struct Server {
+  agent : @agent.Agent
+  listener : Listener
+  mut tcp_server : @socket.TcpServer?
+  mut uds_listener : @raw_fd.RawFd?
+  mut closed : Bool
+}
+pub fn Server::addr(Self) -> @socket.Addr?
+pub async fn Server::bind(@agent.Agent, Listener) -> Self
+pub fn Server::close(Self) -> Unit
+pub async fn Server::run(Self) -> Unit
+
+// Type aliases
+
+// Traits
