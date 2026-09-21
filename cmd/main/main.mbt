@@ -6,19 +6,20 @@
 
 ///|
 /// The demo handlers:
-/// - "check-ip": reads the "ip" argument and sets `txn.ip_score` to 85,
-///   also demonstrating unset-var on `req.flag`;
-/// - "clear-score": removes `txn.ip_score`.
+/// - "check-ip": reads the "ip" argument and sets the transaction variable
+///   `ip_score` to 85, also demonstrating unset-var on the request variable
+///   `flag`;
+/// - "clear-score": removes `ip_score`.
+///
+/// Variable names carry no scope or prefix here: HAProxy maps them to
+/// `<scope>.<var-prefix>.<name>`, e.g. `txn.ipscore.ip_score`.
 fn demo_agent() -> @agent.Agent raise {
   @agent.Agent::new()
   .on("check-ip", fn(msg) {
     guard msg.args is [("ip", Str(_)), ..] else { return [] }
-    [
-      SetVar(Transaction, "txn.ip_score", Int32(85)),
-      UnsetVar(Request, "req.flag"),
-    ]
+    [SetVar(Transaction, "ip_score", Int32(85)), UnsetVar(Request, "flag")]
   })
-  .on("clear-score", fn(_) { [UnsetVar(Transaction, "txn.ip_score")] })
+  .on("clear-score", fn(_) { [UnsetVar(Transaction, "ip_score")] })
 }
 
 ///|
