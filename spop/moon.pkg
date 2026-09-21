@@ -1,0 +1,12 @@
+// SPOP (HAProxy SPOE) protocol codec core.
+// Pure byte-level encoding/decoding: no async or networking dependencies,
+// backend agnostic.
+
+// Warning 79 (implicit_impl_as_method) fires on every `derive(...)` of a
+// public type with this toolchain; it is an ecosystem-wide migration
+// notice, not a defect of this package.
+warnings = "-79"
+
+import {
+  "moonbitlang/core/encoding/utf8",
+}

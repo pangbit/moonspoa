@@ -1,0 +1,148 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "yuebingo/spoa/spop"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn choose_version(Array[String]) -> String raise SpopError
+
+pub fn decode_data(BytesView) -> Data? raise SpopError
+
+pub fn decode_frame(BytesView, max_frame_size? : UInt) -> Frame? raise SpopError
+
+pub fn decode_frame_body(BytesView) -> Frame raise SpopError
+
+pub fn decode_frame_length(BytesView) -> UInt?
+
+pub fn decode_varint(BytesView) -> (UInt64, Int)? raise SpopError
+
+pub let default_max_frame_size : UInt
+
+pub fn disconnect_args(StatusCode, String) -> Array[(String, Data)]
+
+pub fn encode_data(Data) -> Bytes raise SpopError
+
+pub fn encode_frame(Frame) -> Bytes raise SpopError
+
+pub fn encode_varint(UInt64) -> Bytes
+
+pub fn hello_args(versions? : Array[String], max_frame_size? : UInt, capabilities? : Array[String], healthcheck? : Bool, engine_id? : String?) -> Array[(String, Data)]
+
+pub let min_frame_size : UInt
+
+pub fn negotiate_max_frame_size(UInt, UInt) -> UInt raise SpopError
+
+pub fn parse_disconnect_args(Array[(String, Data)]) -> (StatusCode, String) raise SpopError
+
+pub fn parse_hello_args(Array[(String, Data)]) -> HelloInfo raise SpopError
+
+pub fn parse_list(String) -> Array[String]
+
+pub let supported_version : String
+
+// Errors
+pub suberror SpopError {
+  SpopError(code~ : StatusCode, message~ : String)
+}
+pub fn SpopError::code(Self) -> StatusCode
+pub fn SpopError::message(Self) -> String
+pub fn SpopError::new(StatusCode, String) -> Self
+pub impl Show for SpopError
+
+// Types and methods
+pub(all) enum Action {
+  SetVar(VarScope, String, Data)
+  UnsetVar(VarScope, String)
+} derive(Eq, @debug.Debug)
+
+pub(all) enum Data {
+  Null
+  Bool(Bool)
+  Int32(Int)
+  UInt32(UInt)
+  Int64(Int64)
+  UInt64(UInt64)
+  Ipv4(FixedArray[Byte])
+  Ipv6(FixedArray[Byte])
+  Str(String)
+  Bin(Bytes)
+} derive(Eq, @debug.Debug)
+
+pub(all) struct Frame {
+  frame_type : FrameType
+  fin : Bool
+  abort : Bool
+  stream_id : UInt64
+  frame_id : UInt64
+  payload : FramePayload
+} derive(Eq, @debug.Debug)
+pub fn Frame::ack(UInt64, UInt64, Array[Action]) -> Self
+pub fn Frame::disconnect(FrameType, StatusCode, String) -> Self
+pub fn Frame::hello(FrameType, Array[(String, Data)]) -> Self
+pub fn Frame::notify(UInt64, UInt64, Array[Message]) -> Self
+
+pub(all) enum FramePayload {
+  KeyValues(Array[(String, Data)])
+  Messages(Array[Message])
+  Actions(Array[Action])
+} derive(Eq, @debug.Debug)
+
+pub(all) enum FrameType {
+  HAProxyHello
+  HAProxyDisconnect
+  Notify
+  AgentHello
+  AgentDisconnect
+  Ack
+} derive(Eq, @debug.Debug)
+pub fn FrameType::from_int(Int) -> Self?
+pub fn FrameType::to_int(Self) -> Int
+
+pub(all) struct HelloInfo {
+  versions : Array[String]
+  max_frame_size : UInt
+  capabilities : Array[String]
+  healthcheck : Bool
+  engine_id : String?
+} derive(Eq, @debug.Debug)
+
+pub(all) struct Message {
+  name : String
+  args : Array[(String, Data)]
+} derive(Eq, @debug.Debug)
+
+pub(all) enum StatusCode {
+  Normal
+  IoError
+  Timeout
+  FrameTooBig
+  InvalidFrame
+  VersionNotFound
+  MaxFrameSizeNotFound
+  CapabilitiesNotFound
+  UnsupportedVersion
+  InvalidMaxFrameSize
+  FragmentationNotSupported
+  InvalidInterlacedFrames
+  FrameIdNotFound
+  ResourceAllocError
+  UnknownError
+} derive(Eq, @debug.Debug)
+pub fn StatusCode::from_uint(UInt) -> Self?
+pub fn StatusCode::to_uint(Self) -> UInt
+
+pub(all) enum VarScope {
+  Process
+  Session
+  Transaction
+  Request
+  Response
+} derive(Eq, @debug.Debug)
+pub fn VarScope::from_int(Int) -> Self?
+pub fn VarScope::to_int(Self) -> Int
+
+// Type aliases
+
+// Traits
