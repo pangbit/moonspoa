@@ -1,0 +1,11 @@
+// SPOA agent session logic: the agent-side SPOP protocol state machine.
+// IO-agnostic: it runs over any `&@io.Reader + &@io.Writer` pair; the
+// network layer is injected by the caller.
+
+warnings = "-79"
+
+import {
+  "yuebingo/spoa/spop",
+  "moonbitlang/async",
+  "moonbitlang/async/io",
+}

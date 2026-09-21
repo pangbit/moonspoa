@@ -1,0 +1,38 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "yuebingo/spoa/agent"
+
+import {
+  "moonbitlang/async/io",
+  "yuebingo/spoa/spop",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub(all) struct Agent {
+  version : String
+  max_frame_size : UInt
+  capabilities : Array[String]
+  handlers : Map[String, (@spop.Message) -> Array[@spop.Action] raise]
+  on_error : ((String, Error) -> Unit)?
+}
+pub fn Agent::new(version? : String, max_frame_size? : UInt, capabilities? : Array[String], on_error? : (String, Error) -> Unit) -> Self raise @spop.SpopError
+pub fn Agent::on(Self, String, (@spop.Message) -> Array[@spop.Action] raise) -> Self
+
+pub struct Session {
+  agent : Agent
+  mut pipelining : Bool
+  mut negotiated_max_frame_size : UInt
+  mut peer_disconnect : (@spop.StatusCode, String)?
+}
+pub fn Session::negotiated_max_frame_size(Self) -> UInt
+pub fn Session::new(Agent) -> Self
+pub fn Session::peer_disconnect(Self) -> (@spop.StatusCode, String)?
+pub fn Session::pipelining(Self) -> Bool
+pub async fn Session::run(Self, &@io.Reader, &@io.Writer) -> Unit
+
+// Type aliases
+
+// Traits
