@@ -1,0 +1,13 @@
+supported_targets = "native"
+
+import {
+  "yuebingo/spoa/client" @spoe,
+  "yuebingo/spoa/server",
+  "moonbitlang/async",
+  "moonbitlang/async/io",
+  "moonbitlang/async/socket",
+  "moonbitlang/core/env",
+  "moonbitlang/core/string",
+}
+
+pkgtype(kind: "executable")

@@ -1,0 +1,59 @@
+///|
+/// Demo SPOA agent server.
+///
+/// Usage: `moon run cmd/main -- [--port N] [--unix PATH]`
+/// Defaults to TCP 127.0.0.1:12345.
+
+///|
+/// The demo handlers:
+/// - "check-ip": reads the "ip" argument and sets `txn.ip_score` to 85,
+///   also demonstrating unset-var on `req.flag`;
+/// - "clear-score": removes `txn.ip_score`.
+fn demo_agent() -> @agent.Agent raise {
+  @agent.Agent::new()
+  .on("check-ip", fn(msg) {
+    guard msg.args is [("ip", Str(_)), ..] else { return [] }
+    [
+      SetVar(Transaction, "txn.ip_score", Int32(85)),
+      UnsetVar(Request, "req.flag"),
+    ]
+  })
+  .on("clear-score", fn(_) { [UnsetVar(Transaction, "txn.ip_score")] })
+}
+
+///|
+fn parse_args(args : Array[String]) -> (String?, Int) raise {
+  let mut unix : String? = None
+  let mut port = 12345
+  for i = 1; i < args.length(); {
+    match args[i] {
+      "--unix" if i + 1 < args.length() => {
+        unix = Some(args[i + 1])
+        continue i + 2
+      }
+      "--port" if i + 1 < args.length() => {
+        port = @string.parse_int(args[i + 1])
+        continue i + 2
+      }
+      _ => continue i + 1
+    }
+  }
+  (unix, port)
+}
+
+///|
+async fn main {
+  let (unix, port) = parse_args(@env.args())
+  let listener = match unix {
+    Some(path) => {
+      println("SPOA demo agent listening on unix:\{path}")
+      @server.Unix(path)
+    }
+    None => {
+      println("SPOA demo agent listening on 127.0.0.1:\{port}")
+      @server.Listener::tcp("127.0.0.1:\{port}")
+    }
+  }
+  let server = @server.Server::bind(demo_agent(), listener)
+  server.run()
+}

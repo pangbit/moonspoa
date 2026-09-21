@@ -1,0 +1,40 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "yuebingo/spoa"
+
+import {
+  "yuebingo/spoa/agent",
+  "yuebingo/spoa/spop",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+pub using @spop {type Action}
+
+pub using @agent {type Agent}
+
+pub using @spop {type Data}
+
+pub using @spop {type Frame}
+
+pub using @spop {type FramePayload}
+
+pub using @spop {type FrameType}
+
+pub using @spop {type HelloInfo}
+
+pub using @spop {type Message}
+
+pub using @agent {type Session}
+
+pub using @spop {type SpopError}
+
+pub using @spop {type StatusCode}
+
+pub using @spop {type VarScope}
+
+// Traits
