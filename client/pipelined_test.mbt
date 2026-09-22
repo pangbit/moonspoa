@@ -429,3 +429,44 @@ async test "sequential mode discards late acks of timed-out notifies" {
     assert_eq(actions, [SetVar(Process, "proc.order", Str("second"))])
   })
 }
+
+///|
+async test "sequential timeout mid-frame preserves framing" {
+  // Regression test: the timeout fires after the ACK's length prefix was
+  // read but before its body arrives; the next notify must resume the
+  // interrupted read instead of mistaking the old body for a new prefix.
+  let (agent_reader, client_writer) = @io.pipe()
+  let (client_reader, agent_writer) = @io.pipe()
+  @async.with_task_group(group => {
+    group.spawn_bg(() => {
+      scripted_hello(agent_reader, agent_writer)
+      let first = read_raw_frame(agent_reader)
+      let ack = @spop.encode_frame(
+        @spop.Frame::ack(first.stream_id, first.frame_id, []),
+      )
+      // Deliver only the 4-byte length prefix; the body comes after the
+      // client's first notify has timed out.
+      agent_writer.write(ack[:4])
+      let second = read_raw_frame(agent_reader)
+      agent_writer.write(ack[4:])
+      agent_writer.write(
+        @spop.encode_frame(
+          @spop.Frame::ack(second.stream_id, second.frame_id, []),
+        ),
+      )
+    })
+    let client = @client.Client::hello(client_reader, client_writer)
+    try client.notify_messages([{ name: "m", args: [], }], timeout=50) catch {
+      @spop.SpopError(code~, ..) => assert_eq(code, Timeout)
+      err => fail("unexpected error: \{err}")
+    } noraise {
+      _ => fail("expected Timeout")
+    }
+    // Used to raise FrameTooBig(1728053248), reading the old ACK body as a
+    // new length prefix.
+    assert_eq(
+      client.notify_messages([{ name: "m", args: [], }], timeout=1000),
+      [],
+    )
+  })
+}

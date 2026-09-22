@@ -29,6 +29,11 @@ pub struct Client {
   priv mut terminal : @spop.SpopError?
   priv mut gate : @async.Mutex?
   priv mut stopping : Bool
+  // Read progress of the frame currently being read. Kept across calls so
+  // a cancellation that strikes mid-frame (a `notify` timeout) can be
+  // resumed by the next read instead of losing framing.
+  priv mut frame_buf : FixedArray[Byte]?
+  priv mut frame_filled : Int
 }
 
 ///|
@@ -67,8 +72,34 @@ pub fn Client::next_ids(self : Client) -> (UInt64, UInt64) {
 
 ///|
 /// Read one frame from the agent, enforcing our announced max-frame-size.
+///
+/// Read progress lives in `frame_buf`/`frame_filled` and is updated after
+/// every `read` call, so a cancellation (a `notify` timeout) that strikes
+/// mid-frame leaves accurate state behind: the next call resumes exactly
+/// where the interrupted one stopped instead of mistaking the rest of the
+/// old frame for a new length prefix.
 async fn Client::read_frame(self : Client) -> @spop.Frame {
-  let header = self.reader.read_exactly(4)
+  let mut buf = match self.frame_buf {
+    Some(buf) => buf
+    None => {
+      let buf = FixedArray::make(4, b'\x00')
+      self.frame_buf = Some(buf)
+      self.frame_filled = 0
+      buf
+    }
+  }
+  while self.frame_filled < 4 {
+    let n = self.reader.read(
+      buf,
+      offset=self.frame_filled,
+      max_len=4 - self.frame_filled,
+    )
+    if n == 0 {
+      raise @io.ReaderClosed
+    }
+    self.frame_filled += n
+  }
+  let header = buf.unsafe_reinterpret_as_bytes()[:4]
   guard @spop.decode_frame_length(header) is Some(len) else {
     raise @spop.SpopError::new(InvalidFrame, "invalid frame length prefix")
   }
@@ -78,8 +109,27 @@ async fn Client::read_frame(self : Client) -> @spop.Frame {
       "frame length \{len} exceeds max-frame-size \{self.max_frame_size}",
     )
   }
-  let body = self.reader.read_exactly(len.reinterpret_as_int())
-  @spop.decode_frame_body(body)
+  let frame_len = 4 + len.reinterpret_as_int()
+  if buf.length() < frame_len {
+    let full = FixedArray::make(frame_len, b'\x00')
+    buf.blit_to(full, src_offset=0, dst_offset=0, len=4)
+    buf = full
+    self.frame_buf = Some(full)
+  }
+  while self.frame_filled < frame_len {
+    let n = self.reader.read(
+      buf,
+      offset=self.frame_filled,
+      max_len=frame_len - self.frame_filled,
+    )
+    if n == 0 {
+      raise @io.ReaderClosed
+    }
+    self.frame_filled += n
+  }
+  self.frame_buf = None
+  self.frame_filled = 0
+  @spop.decode_frame_body(buf.unsafe_reinterpret_as_bytes()[4:])
 }
 
 ///|
@@ -162,6 +212,8 @@ pub async fn Client::hello(
     terminal: None,
     gate: None,
     stopping: false,
+    frame_buf: None,
+    frame_filled: 0,
   }
   let hello = @spop.Frame::hello(
     HAProxyHello,
@@ -268,8 +320,10 @@ async fn Client::send_frame(self : Client, bytes : Bytes) -> Unit {
 /// (e.g. arriving after a `timeout`) are silently ignored.
 ///
 /// `timeout` is in milliseconds; on expiry `SpopError` with `Timeout` is
-/// raised and the connection stays usable. An AGENT-DISCONNECT received
-/// while waiting raises `SpopError` with the agent's status code.
+/// raised and the connection stays usable — even if the timeout struck
+/// mid-frame, the interrupted read is resumed by the next request rather
+/// than losing framing. An AGENT-DISCONNECT received while waiting raises
+/// `SpopError` with the agent's status code.
 pub async fn Client::notify(
   self : Client,
   stream_id : UInt64,
