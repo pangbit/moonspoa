@@ -1,9 +1,11 @@
 ///|
 /// Demo SPOA agent server: an IP blacklist.
 ///
-/// Usage: `moon run examples/server -- [--port N] [--unix PATH] [--block IP ...]`
-/// Defaults to TCP 127.0.0.1:12345. Each `--block` adds a blacklist entry;
-/// when at least one is given, the entries replace the built-in default list.
+/// Usage: `moon run examples/server -- [--host ADDR] [--port N] [--unix PATH] [--block IP ...]`
+/// Defaults to TCP 127.0.0.1:12345; use `--host 0.0.0.0` to accept remote
+/// engines (e.g. HAProxy on another host). Each `--block` adds a blacklist
+/// entry; when at least one is given, the entries replace the built-in
+/// default list.
 
 ///|
 /// The demo handler answers "check-ip" messages: it reads the "ip" argument
@@ -43,16 +45,23 @@ fn ipv6_to_string(b : FixedArray[Byte]) -> String {
 }
 
 ///|
-/// Returns `(unix_path, port, cli_blacklist)`; an empty `cli_blacklist`
+/// Returns `(unix_path, host, port, cli_blacklist)`; an empty `cli_blacklist`
 /// means no `--block` was given and the default list applies.
-fn parse_args(args : Array[String]) -> (String?, Int, Array[String]) raise {
+fn parse_args(
+  args : Array[String],
+) -> (String?, String, Int, Array[String]) raise {
   let mut unix : String? = None
+  let mut host = "127.0.0.1"
   let mut port = 12345
   let blocked : Array[String] = []
   for i = 1; i < args.length(); {
     match args[i] {
       "--unix" if i + 1 < args.length() => {
         unix = Some(args[i + 1])
+        continue i + 2
+      }
+      "--host" if i + 1 < args.length() => {
+        host = args[i + 1]
         continue i + 2
       }
       "--port" if i + 1 < args.length() => {
@@ -66,12 +75,12 @@ fn parse_args(args : Array[String]) -> (String?, Int, Array[String]) raise {
       _ => continue i + 1
     }
   }
-  (unix, port, blocked)
+  (unix, host, port, blocked)
 }
 
 ///|
 async fn main {
-  let (unix, port, cli_blacklist) = parse_args(@env.args())
+  let (unix, host, port, cli_blacklist) = parse_args(@env.args())
   let blacklist = if cli_blacklist.is_empty() {
     ["192.0.2.1", "198.51.100.23", "203.0.113.7"]
   } else {
@@ -83,8 +92,8 @@ async fn main {
       @transport.Unix(path)
     }
     None => {
-      println("SPOA IP-blacklist agent listening on 127.0.0.1:\{port}")
-      @transport.Listener::tcp("127.0.0.1:\{port}")
+      println("SPOA IP-blacklist agent listening on \{host}:\{port}")
+      @transport.Listener::tcp("\{host}:\{port}")
     }
   }
   println("blacklist: \{blacklist.join(", ")}")

@@ -88,7 +88,8 @@ test {
 ### 可运行示例
 
 ```bash
-# 终端 1：IP 黑名单 agent（默认 TCP 127.0.0.1:12345，--unix 可切 UDS；
+# 终端 1：IP 黑名单 agent（默认 TCP 127.0.0.1:12345，--unix 可切 UDS，
+# --host 0.0.0.0 可接受其它机器上的 HAProxy 连接；
 # 默认黑名单为 192.0.2.1 / 198.51.100.23 / 203.0.113.7，
 # 每给一个 --block 追加一条，且整体替换默认名单）
 moon run examples/server -- --port 12345 --block 203.0.113.7
