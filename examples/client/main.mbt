@@ -42,8 +42,7 @@ async fn run_client(
 ) -> Unit {
   let client = @spoe.Client::hello(reader, writer)
   println("connected, negotiated version \{client.version()}")
-  let (sid, fid) = client.next_ids()
-  let actions = client.notify(sid, fid, [
+  let actions = client.notify_messages([
     { name: "check-ip", args: [("ip", Str(ip))], },
   ])
   println("received \{actions.length()} action(s):")

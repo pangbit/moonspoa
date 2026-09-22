@@ -24,7 +24,11 @@ strictly one-way, and each sub-package can be referenced independently:
   negotiation. Zero dependencies (core only), backend agnostic.
 - `agent/` — agent-side session state machine (`Agent`, `Session`), IO
   agnostic (depends on `spop` + `moonbitlang/async/io` only).
-- `client/` — SPOE/engine-side client, also used as the test peer.
+- `client/` — SPOE/engine-side client (HELLO negotiation, sequential and
+  concurrent pipelined NOTIFY via `Client::with_pipelining`, optional
+  per-notify timeout, graceful DISCONNECT), IO agnostic (depends on `spop`
+  + `moonbitlang/async` + `moonbitlang/async/aqueue`); also used as the
+  test peer.
 - `server/` — TCP/UDS transport, **native only** (C stub `uds.c`,
   `moonbitlang/async/raw_fd`). UDS accept is poll-based (5 ms) because
   moonbitlang/async@0.22.1 exposes no public accept readiness API and its

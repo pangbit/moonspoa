@@ -23,15 +23,18 @@ pub struct Client {
   mut peer_capabilities : Array[String]
   stream_id : UInt64
   mut frame_id : UInt64
+  // private fields
 }
 pub async fn Client::disconnect(Self, status? : @spop.StatusCode, message? : String) -> (@spop.StatusCode, String)
 pub async fn Client::hello(&@io.Reader, &@io.Writer, supported_versions? : Array[String], max_frame_size? : UInt, capabilities? : Array[String], engine_id? : String?, healthcheck? : Bool) -> Self
 pub fn Client::next_ids(Self) -> (UInt64, UInt64)
-pub async fn Client::notify(Self, UInt64, UInt64, Array[@spop.Message]) -> Array[@spop.Action]
+pub async fn Client::notify(Self, UInt64, UInt64, Array[@spop.Message], timeout? : Int) -> Array[@spop.Action]
+pub async fn Client::notify_messages(Self, Array[@spop.Message], timeout? : Int) -> Array[@spop.Action]
 pub fn Client::peer_capabilities(Self) -> Array[String]
 pub fn Client::peer_max_frame_size(Self) -> UInt
 pub fn Client::pipelining(Self) -> Bool
 pub fn Client::version(Self) -> String
+pub async fn[X] Client::with_pipelining(Self, async (Self) -> X) -> X
 
 // Type aliases
 

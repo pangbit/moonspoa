@@ -10,7 +10,7 @@ MoonBit 实现的 SPOA（Stream Processing Offload Agent）库：HAProxy SPOE v1
 spop        协议编解码核心，零依赖、后端无关（不 import 任何异步/网络库）
   ↑
 agent       agent 侧会话状态机（仅依赖 spop + moonbitlang/async/io，网络层由使用者注入）
-client      SPOE/engine 侧客户端（仅依赖 spop + moonbitlang/async/io，也是测试对端）
+client      SPOE/engine 侧客户端（HELLO 协商、顺序/并发 pipelined NOTIFY、超时、优雅断开；也是测试对端）
   ↑
 server      TCP / UDS 传输，native only（依赖 agent + moonbitlang/async）
 
@@ -60,8 +60,7 @@ async fn main {
 async fn main {
   let conn = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:12345"))
   let client = @client.Client::hello(conn, conn) // HELLO 握手 + 协商校验
-  let (sid, fid) = client.next_ids()
-  let actions = client.notify(sid, fid, [
+  let actions = client.notify_messages([
     { name: "check-ip", args: [("ip", Str("203.0.113.7"))], },
   ])
   for action in actions {
@@ -70,6 +69,34 @@ async fn main {
   ignore(client.disconnect())
 }
 ```
+
+并发场景用 `with_pipelining` 开启 pipelined 模式（SPOE.txt 3.2.1）：内部启动专用读任务，
+按 (stream-id, frame-id) 把 ACK 分发给等待中的 `notify` 调用方，任意数量的任务可共享
+同一连接并发收发；ACK 乱序到达也能正确配对。对端未协商 pipelining 时自动退化为
+串行在飞，行为依然正确。`timeout` 参数（毫秒）可为单次 notify 设置超时，超时抛
+`SpopError(Timeout)`，连接保持可用：
+
+```mbt nocheck
+///|
+async fn query_all(client : @client.Client, ips : Array[String]) -> Unit {
+  client.with_pipelining(fn(client) {
+    @async.with_task_group(group => {
+      for ip in ips {
+        group.spawn_bg(() => {
+          let actions = client.notify_messages(
+            [{ name: "check-ip", args: [("ip", Str(ip))], }],
+            timeout=1000,
+          )
+          println("\{ip}: \{Repr(actions)}")
+        })
+      }
+    })
+  })
+}
+```
+
+超过对端 max-frame-size 的 NOTIFY 在写出前本地抛 `SpopError(FrameTooBig)`；
+对端随时发来的 AGENT-DISCONNECT 会让在飞与后续的 notify 抛出其携带的状态码。
 
 ### 协议层单独使用（根包重导出）
 
@@ -138,11 +165,11 @@ curl -i http://127.0.0.1:8080/
 moon test        # 模块 preferred_target = native，直接跑即可
 ```
 
-覆盖：varint 边界向量（逐字节对照 haproxy intops.h 算法）、typed-data 全类型 roundtrip、六种帧型 roundtrip 与错误路径、内存 duplex 上的 agent/client 会话级测试、真实 TCP 回环与 UDS 集成测试。
+覆盖：varint 边界向量（逐字节对照 haproxy intops.h 算法）、typed-data 全类型 roundtrip、六种帧型 roundtrip 与错误路径、内存 duplex 上的 agent/client 会话级测试（含 client pipelined 并发、乱序 ACK、超时、异常断开）、真实 TCP 回环与 UDS 集成测试。
 
 ## 限制与说明
 
-- **pipelining 已支持**：agent 端并发处理在飞 NOTIFY（写方向加锁）；client 端目前是严格顺序的 notify，**并发 pipelined notify 未实现**（需要 scoped 读循环任务，见 `client/client.mbt` 的 TODO）。
+- **pipelining 已支持**：agent 端并发处理在飞 NOTIFY（写方向加锁）；client 端 `with_pipelining` 作用域内可并发 notify,ACK 按 id 分发、乱序到达亦可配对；对端未协商 pipelining 时自动串行化在飞帧。
 - SPOP 的 fragmentation 与 async 能力已被上游废弃，不实现（收到无 FIN 的帧按规范回 `FragmentationNotSupported`）。
 - **UDS accept 为轮询实现**（默认 5ms 间隔）：moonbitlang/async@0.22.1 没有公开的 Unix socket API，且其 `internal/*` 包跨模块不可引用（toolchain 强制），因此 UDS 由 C stub 建 socket、经公开包 `raw_fd` 接入事件循环，accept 以短间隔轮询驱动。上游若开放公开 accept readiness API 可直接替换。
 - 依赖锁定 `moonbitlang/async@0.22.1`；`server` 包为 native only。

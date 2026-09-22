@@ -1,15 +1,16 @@
 ///|
 /// A SPOE client: the engine (HAProxy) side of a SPOP connection.
 ///
-/// Created by `Client::hello`, which performs the HELLO handshake. Frames
-/// are exchanged sequentially: each `notify` sends a NOTIFY frame and waits
-/// for the matching ACK before returning.
+/// Created by `Client::hello`, which performs the HELLO handshake. By
+/// default frames are exchanged sequentially: each `notify` sends a NOTIFY
+/// frame and waits for the matching ACK before returning.
 ///
-/// TODO: concurrent pipelined `notify` calls. That requires a dedicated
-/// reader task dispatching ACKs to waiting callers, whose lifetime must be
-/// bound to a task group owned by the caller (e.g. a scoped
-/// `Client::run(reader, writer, fn)`) since moonbitlang/async has no
-/// detached tasks.
+/// `Client::with_pipelining` runs a dedicated reader task that dispatches
+/// ACK frames to waiting `notify` callers by their (stream-id, frame-id),
+/// so any number of tasks can share the connection with NOTIFY frames in
+/// flight simultaneously (the "pipelining" capability, SPOE.txt 3.2.1).
+/// When the peer did not negotiate pipelining, in-flight frames are
+/// transparently serialized instead, one at a time.
 pub struct Client {
   supported_versions : Array[String]
   max_frame_size : UInt
@@ -22,6 +23,12 @@ pub struct Client {
   mut peer_capabilities : Array[String]
   stream_id : UInt64
   mut frame_id : UInt64
+  priv write_mutex : @async.Mutex
+  priv mut pending : Map[(UInt64, UInt64), @aqueue.Queue[@spop.Frame]]?
+  priv mut disconnect_waiter : @aqueue.Queue[@spop.Frame]?
+  priv mut terminal : @spop.SpopError?
+  priv mut gate : @async.Mutex?
+  priv mut stopping : Bool
 }
 
 ///|
@@ -149,6 +156,12 @@ pub async fn Client::hello(
     peer_capabilities: [],
     stream_id: 0,
     frame_id: 0,
+    write_mutex: @async.Mutex(),
+    pending: None,
+    disconnect_waiter: None,
+    terminal: None,
+    gate: None,
+    stopping: false,
   }
   let hello = @spop.Frame::hello(
     HAProxyHello,
@@ -160,7 +173,15 @@ pub async fn Client::hello(
       engine_id~,
     ),
   )
-  writer.write(@spop.encode_frame(hello))
+  let hello_bytes = @spop.encode_frame(hello)
+  // FRAME-LENGTH (the 4-byte prefix) does not count towards the frame size.
+  if hello_bytes.length() - 4 > max_frame_size.reinterpret_as_int() {
+    raise @spop.SpopError::new(
+      FrameTooBig,
+      "HAPROXY-HELLO frame of \{hello_bytes.length() - 4} bytes exceeds the announced max-frame-size \{max_frame_size}",
+    )
+  }
+  client.send_frame(hello_bytes)
   let frame = client.read_frame()
   match frame.frame_type {
     AgentHello => {
@@ -182,7 +203,7 @@ pub async fn Client::hello(
       if peer_max_frame_size > max_frame_size ||
         peer_max_frame_size < @spop.min_frame_size {
         let message = "agent announced invalid max-frame-size \{peer_max_frame_size}"
-        writer.write(
+        client.send_frame(
           @spop.encode_frame(
             @spop.Frame::disconnect(
               HAProxyDisconnect,
@@ -198,6 +219,11 @@ pub async fn Client::hello(
       client.version = version
       client.peer_max_frame_size = peer_max_frame_size
       client.peer_capabilities = peer_capabilities
+      if !client.pipelining() {
+        // Without a shared "pipelining" capability only one NOTIFY frame
+        // may be in flight; the gate serializes concurrent callers.
+        client.gate = Some(@async.Mutex())
+      }
       client
     }
     AgentDisconnect => {
@@ -219,48 +245,313 @@ pub async fn Client::hello(
 }
 
 ///|
+/// Write one encoded frame, serialized against concurrent writers.
+async fn Client::send_frame(self : Client, bytes : Bytes) -> Unit {
+  self.write_mutex.acquire()
+  defer self.write_mutex.release()
+  self.writer.write(bytes)
+}
+
+///|
 /// Send a NOTIFY frame with `messages` and wait for the matching ACK.
-/// Returns the actions of the ACK. Raises `SpopError` with
-/// `FrameIdNotFound` if the ACK echoes different ids, or with the agent's
-/// status code if an AGENT-DISCONNECT is received instead.
+/// Returns the actions of the ACK.
+///
+/// The encoded frame must fit into the max-frame-size announced by the
+/// agent; otherwise `SpopError` with `FrameTooBig` is raised before
+/// anything is written (fragmentation was removed from SPOP 2.0).
+///
+/// In sequential mode (outside `Client::with_pipelining`) the ACK is read
+/// directly and must echo the request ids, or `SpopError` with
+/// `FrameIdNotFound` is raised. Inside `with_pipelining` the shared reader
+/// task dispatches the ACK by its ids; ids already in flight are rejected
+/// with `FrameIdNotFound`, and ACKs for unknown ids (e.g. arriving after a
+/// `timeout`) are silently ignored.
+///
+/// `timeout` is in milliseconds; on expiry `SpopError` with `Timeout` is
+/// raised and the connection stays usable. An AGENT-DISCONNECT received
+/// while waiting raises `SpopError` with the agent's status code.
 pub async fn Client::notify(
   self : Client,
   stream_id : UInt64,
   frame_id : UInt64,
   messages : Array[@spop.Message],
+  timeout? : Int,
 ) -> Array[@spop.Action] {
-  self.writer.write(
-    @spop.encode_frame(@spop.Frame::notify(stream_id, frame_id, messages)),
+  let bytes = @spop.encode_frame(
+    @spop.Frame::notify(stream_id, frame_id, messages),
   )
-  let frame = self.read_frame()
-  match frame.frame_type {
-    Ack => {
-      if frame.stream_id != stream_id || frame.frame_id != frame_id {
+  if bytes.length() - 4 > self.peer_max_frame_size.reinterpret_as_int() {
+    raise @spop.SpopError::new(
+      FrameTooBig,
+      "NOTIFY frame of \{bytes.length() - 4} bytes exceeds the agent's max-frame-size \{self.peer_max_frame_size}",
+    )
+  }
+  match timeout {
+    Some(ms) =>
+      @async.with_timeout(
+        ms,
+        () => self.wait_ack(stream_id, frame_id, bytes),
+        error=@spop.SpopError::new(
+          Timeout,
+          "NOTIFY (\{stream_id}, \{frame_id}) not acknowledged within \{ms}ms",
+        ),
+      )
+    None => self.wait_ack(stream_id, frame_id, bytes)
+  }
+}
+
+///|
+/// Send a NOTIFY frame with automatically allocated ids; see
+/// `Client::notify`.
+pub async fn Client::notify_messages(
+  self : Client,
+  messages : Array[@spop.Message],
+  timeout? : Int,
+) -> Array[@spop.Action] {
+  let (stream_id, frame_id) = self.next_ids()
+  match timeout {
+    Some(ms) => self.notify(stream_id, frame_id, messages, timeout=ms)
+    None => self.notify(stream_id, frame_id, messages)
+  }
+}
+
+///|
+/// Write the encoded NOTIFY frame and wait for its ACK, either directly
+/// (sequential mode) or through the reader task (pipelined mode).
+async fn Client::wait_ack(
+  self : Client,
+  stream_id : UInt64,
+  frame_id : UInt64,
+  bytes : Bytes,
+) -> Array[@spop.Action] {
+  match self.pending {
+    None => {
+      self.send_frame(bytes)
+      let frame = self.read_frame()
+      match frame.frame_type {
+        Ack => {
+          if frame.stream_id != stream_id || frame.frame_id != frame_id {
+            raise @spop.SpopError::new(
+              FrameIdNotFound,
+              "ACK echoes (\{frame.stream_id}, \{frame.frame_id}), expected (\{stream_id}, \{frame_id})",
+            )
+          }
+          guard frame.payload is Actions(actions) else {
+            raise @spop.SpopError::new(InvalidFrame, "malformed ACK payload")
+          }
+          actions
+        }
+        AgentDisconnect => {
+          guard frame.payload is KeyValues(args) else {
+            raise @spop.SpopError::new(
+              InvalidFrame,
+              "malformed AGENT-DISCONNECT payload",
+            )
+          }
+          let (code, message) = @spop.parse_disconnect_args(args)
+          raise @spop.SpopError::new(code, message)
+        }
+        _ =>
+          raise @spop.SpopError::new(
+            InvalidFrame,
+            "expected ACK, got \{Repr(frame.frame_type)}",
+          )
+      }
+    }
+    Some(pending) => {
+      if self.terminal is Some(err) {
+        raise err
+      }
+      if self.disconnect_waiter is Some(_) {
+        raise @spop.SpopError::new(Normal, "client is disconnecting")
+      }
+      let key = (stream_id, frame_id)
+      if pending.contains(key) {
         raise @spop.SpopError::new(
           FrameIdNotFound,
-          "ACK echoes (\{frame.stream_id}, \{frame.frame_id}), expected (\{stream_id}, \{frame_id})",
+          "frame id (\{stream_id}, \{frame_id}) is already in flight",
         )
       }
-      guard frame.payload is Actions(actions) else {
-        raise @spop.SpopError::new(InvalidFrame, "malformed ACK payload")
+      if self.gate is Some(gate) {
+        gate.acquire()
       }
-      actions
-    }
-    AgentDisconnect => {
-      guard frame.payload is KeyValues(args) else {
-        raise @spop.SpopError::new(
-          InvalidFrame,
-          "malformed AGENT-DISCONNECT payload",
-        )
-      }
-      let (code, message) = @spop.parse_disconnect_args(args)
-      raise @spop.SpopError::new(code, message)
-    }
-    _ =>
-      raise @spop.SpopError::new(
-        InvalidFrame,
-        "expected ACK, got \{Repr(frame.frame_type)}",
+      let waiter : @aqueue.Queue[@spop.Frame] = @aqueue.Queue(
+        kind=@aqueue.Unbounded,
       )
+      pending[key] = waiter
+      let result : Result[Array[@spop.Action], Error] = Ok(
+        self.roundtrip(waiter, bytes),
+      ) catch {
+        e => Err(e)
+      }
+      pending.remove(key)
+      if self.gate is Some(gate) {
+        gate.release()
+      }
+      match result {
+        Ok(actions) => actions
+        Err(err) => raise err
+      }
+    }
+  }
+}
+
+///|
+/// The pipelined round trip: write the frame, wait for the reader task to
+/// deliver the ACK. The terminal-state checks are repeated here (after
+/// registration in `pending`) so a concurrently terminating reader cannot
+/// leave this waiter behind.
+async fn Client::roundtrip(
+  self : Client,
+  waiter : @aqueue.Queue[@spop.Frame],
+  bytes : Bytes,
+) -> Array[@spop.Action] {
+  if self.terminal is Some(err) {
+    raise err
+  }
+  if self.disconnect_waiter is Some(_) {
+    raise @spop.SpopError::new(Normal, "client is disconnecting")
+  }
+  self.send_frame(bytes)
+  let frame = waiter.get()
+  guard frame.payload is Actions(actions) else {
+    raise @spop.SpopError::new(InvalidFrame, "malformed ACK payload")
+  }
+  actions
+}
+
+///|
+/// Run `f` with a dedicated reader task that dispatches incoming frames,
+/// enabling concurrent in-flight `Client::notify` calls from multiple
+/// tasks (the "pipelining" capability). When the peer did not announce
+/// "pipelining", in-flight NOTIFY frames are transparently serialized.
+///
+/// The reader task stops when `f` returns or raises; the client then falls
+/// back to sequential mode.
+pub async fn[X] Client::with_pipelining(
+  self : Client,
+  f : async (Client) -> X,
+) -> X {
+  guard self.pending is None else {
+    raise @spop.SpopError::new(
+      UnknownError,
+      "client is already in pipelining mode",
+    )
+  }
+  let pending : Map[(UInt64, UInt64), @aqueue.Queue[@spop.Frame]] = Map([])
+  self.pending = Some(pending)
+  let result : Result[X, Error] = @async.with_task_group(group => {
+    // no_wait: the reader loop never ends on its own; it is cancelled when
+    // the group winds down (i.e. once `f` and the tasks it awaits are done).
+    group.spawn_bg(
+      () => self.reader_loop(pending),
+      no_wait=true,
+      allow_failure=true,
+    )
+    let result : Result[X, Error] = Ok(f(self)) catch { e => Err(e) }
+    // Signal the reader task to exit quietly when the group winds down.
+    self.stopping = true
+    result
+  }) catch {
+    e => Err(e)
+  }
+  self.pending = None
+  self.disconnect_waiter = None
+  self.stopping = false
+  match result {
+    Ok(value) => value
+    Err(err) => raise err
+  }
+}
+
+///|
+/// The pipelined-mode frame reader: dispatches ACK frames to the `notify`
+/// callers waiting in `pending` and forwards AGENT-DISCONNECT to a waiting
+/// `disconnect`. Never raises: the first terminal condition (EOF, I/O or
+/// protocol error, AGENT-DISCONNECT) is recorded in `terminal` and
+/// broadcast to all waiters before the loop exits.
+async fn Client::reader_loop(
+  self : Client,
+  pending : Map[(UInt64, UInt64), @aqueue.Queue[@spop.Frame]],
+) -> Unit {
+  for ;; {
+    let frame = self.read_frame() catch {
+      err =>
+        if self.stopping {
+          // The with_pipelining scope is exiting normally.
+          return
+        } else {
+          match err {
+            @spop.SpopError(code~, message~) =>
+              self.terminate(pending, @spop.SpopError::new(code, message), None)
+            _ =>
+              self.terminate(
+                pending,
+                @spop.SpopError::new(IoError, "I/O error: \{err}"),
+                None,
+              )
+          }
+          return
+        }
+    }
+    match frame.frame_type {
+      Ack =>
+        // Unknown ids are ignored: the waiter may have timed out already.
+        if pending.get((frame.stream_id, frame.frame_id)) is Some(waiter) {
+          ignore(waiter.try_put(frame) catch { _ => false })
+        }
+      AgentDisconnect => {
+        let (code, message) = match frame.payload {
+          KeyValues(args) =>
+            @spop.parse_disconnect_args(args) catch {
+              _ => (UnknownError, "malformed AGENT-DISCONNECT payload")
+            }
+          _ => (InvalidFrame, "malformed AGENT-DISCONNECT payload")
+        }
+        self.terminate(
+          pending,
+          @spop.SpopError::new(code, message),
+          Some(frame),
+        )
+        return
+      }
+      _ => {
+        self.terminate(
+          pending,
+          @spop.SpopError::new(
+            InvalidFrame,
+            "unexpected frame type \{Repr(frame.frame_type)}",
+          ),
+          None,
+        )
+        return
+      }
+    }
+  }
+}
+
+///|
+/// Record the terminal error (the first one wins) and wake everyone:
+/// pending `notify` waiters get the error; a waiting `disconnect` gets
+/// `reply` if provided (the AGENT-DISCONNECT frame), or the error.
+fn Client::terminate(
+  self : Client,
+  pending : Map[(UInt64, UInt64), @aqueue.Queue[@spop.Frame]],
+  err : @spop.SpopError,
+  reply : @spop.Frame?,
+) -> Unit {
+  if self.terminal is None {
+    self.terminal = Some(err)
+  }
+  let err = self.terminal.unwrap()
+  for entry in pending {
+    entry.1.close(error=err)
+  }
+  if self.disconnect_waiter is Some(waiter) {
+    match reply {
+      Some(frame) => ignore(waiter.try_put(frame) catch { _ => false })
+      None => waiter.close(error=err)
+    }
   }
 }
 
@@ -268,19 +559,65 @@ pub async fn Client::notify(
 /// Disconnect gracefully: send HAPROXY-DISCONNECT with `status` and
 /// `message`, and wait for the agent's AGENT-DISCONNECT, whose status code
 /// and message are returned.
+///
+/// In pipelined mode the reply is awaited through the reader task; if the
+/// agent already sent AGENT-DISCONNECT, its status code and message are
+/// returned directly. Pending `notify` calls are failed by the reader task
+/// once the agent's AGENT-DISCONNECT arrives.
 pub async fn Client::disconnect(
   self : Client,
   status? : @spop.StatusCode = Normal,
   message? : String = "",
 ) -> (@spop.StatusCode, String) {
-  self.writer.write(
-    @spop.encode_frame(
-      @spop.Frame::disconnect(HAProxyDisconnect, status, message),
-    ),
+  let bytes = @spop.encode_frame(
+    @spop.Frame::disconnect(HAProxyDisconnect, status, message),
   )
-  let frame = self.read_frame()
-  match frame.frame_type {
-    AgentDisconnect => {
+  match self.pending {
+    None => {
+      self.send_frame(bytes)
+      let frame = self.read_frame()
+      match frame.frame_type {
+        AgentDisconnect => {
+          guard frame.payload is KeyValues(args) else {
+            raise @spop.SpopError::new(
+              InvalidFrame,
+              "malformed AGENT-DISCONNECT payload",
+            )
+          }
+          @spop.parse_disconnect_args(args)
+        }
+        _ =>
+          raise @spop.SpopError::new(
+            InvalidFrame,
+            "expected AGENT-DISCONNECT, got \{Repr(frame.frame_type)}",
+          )
+      }
+    }
+    Some(_) => {
+      if self.terminal is Some(err) {
+        return (err.code(), err.message())
+      }
+      guard self.disconnect_waiter is None else {
+        raise @spop.SpopError::new(
+          InvalidFrame,
+          "disconnect already in progress",
+        )
+      }
+      let waiter : @aqueue.Queue[@spop.Frame] = @aqueue.Queue(
+        kind=@aqueue.Unbounded,
+      )
+      self.disconnect_waiter = Some(waiter)
+      let result : Result[@spop.Frame, Error] = try {
+        self.send_frame(bytes)
+        Ok(waiter.get())
+      } catch {
+        e => Err(e)
+      }
+      self.disconnect_waiter = None
+      let frame = match result {
+        Ok(frame) => frame
+        Err(err) => raise err
+      }
       guard frame.payload is KeyValues(args) else {
         raise @spop.SpopError::new(
           InvalidFrame,
@@ -289,10 +626,5 @@ pub async fn Client::disconnect(
       }
       @spop.parse_disconnect_args(args)
     }
-    _ =>
-      raise @spop.SpopError::new(
-        InvalidFrame,
-        "expected AGENT-DISCONNECT, got \{Repr(frame.frame_type)}",
-      )
   }
 }

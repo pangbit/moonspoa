@@ -6,10 +6,11 @@ warnings = "-79"
 
 import {
   "yuebingo/spoa/spop",
+  "moonbitlang/async",
   "moonbitlang/async/io",
+  "moonbitlang/async/aqueue",
 }
 
 import {
   "yuebingo/spoa/agent",
-  "moonbitlang/async",
 } for "test"
