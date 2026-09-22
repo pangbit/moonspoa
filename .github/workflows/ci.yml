@@ -104,10 +104,13 @@ jobs:
       - name: Allowed client is proxied to the backend
         run: |
           kill "$(cat /tmp/agent.pid)"
-          deadline=$((SECONDS + 30))
-          while ss -ltn 'sport = :12345' | grep -q LISTEN; do
+          # TcpServer uses reuse_addr=false. Wait for old connections, including
+          # TIME_WAIT, as well as the listener before rebinding the same port.
+          deadline=$((SECONDS + 120))
+          while ss -Htan 'sport = :12345' | grep -q .; do
             if [ "$SECONDS" -ge "$deadline" ]; then
-              echo 'Timed out waiting for the old agent listener to close'
+              echo 'Timed out waiting for the old agent port to become reusable'
+              ss -tan 'sport = :12345'
               exit 1
             fi
             sleep 1
