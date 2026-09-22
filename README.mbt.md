@@ -38,10 +38,11 @@ moon add yuebingo/spoa   # 发布到 mooncakes 之后可用
 ///|
 async fn main {
   let agent = @agent.Agent::new().on("check-ip", fn(msg) {
-    // msg.args 是有序的 (String, Data) 列表
-    guard msg.args is [("ip", Str(_)), ..] else { return [] }
-    // 变量名不含作用域与前缀；HAProxy 侧最终为 txn.<var-prefix>.ip_score
-    [SetVar(Transaction, "ip_score", Int32(85))]
+    // msg.args 是有序的 (String, Data) 列表；HAProxy `args ip=src` 送来的是
+    // Ipv4/Ipv6 类型，这里演示 demo client 发来的 Str
+    guard msg.args is [("ip", Str(ip)), ..] else { return [] }
+    // 变量名不含作用域与前缀；HAProxy 侧最终为 txn.<var-prefix>.ip_blocked
+    [SetVar(Transaction, "ip_blocked", Bool(ip == "203.0.113.7"))]
   })
   // TCP：Listener::tcp("127.0.0.1:12345")；UDS：@server.Unix("/tmp/spoa.sock")
   let server = @server.Server::bind(
@@ -61,7 +62,7 @@ async fn main {
   let client = @client.Client::hello(conn, conn) // HELLO 握手 + 协商校验
   let (sid, fid) = client.next_ids()
   let actions = client.notify(sid, fid, [
-    { name: "check-ip", args: [("ip", Str("1.2.3.4"))], },
+    { name: "check-ip", args: [("ip", Str("203.0.113.7"))], },
   ])
   for action in actions {
     println("\{Repr(action)}")
@@ -87,53 +88,48 @@ test {
 ### 可运行示例
 
 ```bash
-# 终端 1：demo agent（默认 TCP 127.0.0.1:12345，--unix 可切 UDS）
-moon run examples/server -- --port 12345
-# 终端 2：demo client，发一条 check-ip NOTIFY 并打印 ACK 的 actions
-moon run examples/client -- --port 12345
+# 终端 1：IP 黑名单 agent（默认 TCP 127.0.0.1:12345，--unix 可切 UDS；
+# 默认黑名单为 192.0.2.1 / 198.51.100.23 / 203.0.113.7，
+# 每给一个 --block 追加一条，且整体替换默认名单）
+moon run examples/server -- --port 12345 --block 203.0.113.7
+# 终端 2：demo client 传入待检测 IP（位置参数，缺省 203.0.113.7），
+# 发送 check-ip NOTIFY，打印 ACK 的 actions 与判定结论
+moon run examples/client -- --port 12345 203.0.113.7
 ```
 
-## HAProxy 侧配置示例
+## 接入 HAProxy
 
-`haproxy.cfg` 片段：
+`examples/haproxy/` 提供了可直接运行的完整配置（同样以 IP 黑名单为例）：
 
-```
-global
-    maxconn 1024
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client  30s
-    timeout server  30s
-
-frontend http-in
-    bind *:8080
-    filter spoe engine ipscore config /etc/haproxy/spoe-ipscore.conf
-    default_backend servers
-
-backend agents
-    mode spop
-    balance roundrobin
-    server agent1 127.0.0.1:12345
-```
-
-`spoe-ipscore.conf` 片段：
+- `examples/haproxy/haproxy.cfg` — frontend `http-in` 通过
+  `filter spoe engine ipblacklist config spoe-ipblacklist.conf` 挂接 agent，
+  并以 `http-request deny deny_status 403 if { var(txn.ipbl.ip_blocked) -m bool }`
+  拦截命中黑名单的请求；未命中的请求转发到 `127.0.0.1:8000`；
+- `examples/haproxy/spoe-ipblacklist.conf` — SPOE agent 声明（关键片段）：
 
 ```
-[ipscore]
-spoe-agent agents
-    messages check-ip
-    option var-prefix ipscore
-    timeout processing 10ms
-    use-backend agents
-
 spoe-message check-ip
     args ip=src
     event on-frontend-http-request
 ```
 
-HAProxy 会把 `src` 作为 `ip` 参数发送 `check-ip` 消息；agent 回的 `set-var` 动作中，变量名会被加上 `ipscore.` 前缀并置于作用域之后，即上面的 `ip_score` 在 HAProxy 中名为 `txn.ipscore.ip_score`，可在后续规则中使用，例如 `http-request deny if { var(txn.ipscore.ip_score) -m int gt 80 }`。
+HAProxy 会把 `src` 以 Ipv4/Ipv6 类型作为 `ip` 参数发送 `check-ip` 消息；agent 回的
+`set-var` 动作中，变量名会被加上 `ipbl.` 前缀并置于作用域之后，即 `ip_blocked` 在
+HAProxy 中名为 `txn.ipbl.ip_blocked`（Bool）。注意 IPv6 地址在 agent 侧按完整
+8 组十六进制形式比较，黑名单条目需写成如
+`2001:0db8:0000:0000:0000:0000:0000:0001` 的形式。
+
+端到端演示：
+
+```bash
+# 终端 1：agent；本地演示可把 127.0.0.1 加入黑名单以观察 403
+moon run examples/server -- --block 127.0.0.1
+# 终端 2：haproxy（spoe 配置路径相对 examples/haproxy）
+cd examples/haproxy && haproxy -f haproxy.cfg
+# 终端 3：命中黑名单 → 403；未命中 → 转发到 127.0.0.1:8000
+# （可用 python3 -m http.server 8000 充当后端，未启动时放行请求为 503，属预期）
+curl -i http://127.0.0.1:8080/
+```
 
 ## 测试
 
