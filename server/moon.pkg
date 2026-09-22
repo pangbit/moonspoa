@@ -25,7 +25,9 @@ import {
 
 import {
   "yuebingo/spoa/client",
+  "yuebingo/spoa/spop",
   "moonbitlang/async/fs",
+  "moonbitlang/async/io",
 } for "test"
 
 options(
