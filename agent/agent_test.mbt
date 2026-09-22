@@ -169,6 +169,31 @@ async test "pipelined notifies are answered concurrently" {
 }
 
 ///|
+async test "agent-hello announces the negotiated max-frame-size" {
+  // The peer announces 1024, below the agent default of 16380; the
+  // AGENT-HELLO must carry the lower value (SPOE.txt 3.2.4).
+  with_agent(@agent.Agent::new(), (reader, writer) => {
+    writer.write(
+      @spop.encode_frame(@spop.Frame::hello(HAProxyHello, agent_hello_args([]))),
+    )
+    let hello = read_frame(reader)
+    assert_eq(hello.frame_type, AgentHello)
+    guard hello.payload is KeyValues(args) else { fail("expected key-values") }
+    let mut max_frame_size : UInt = 0
+    for kv in args {
+      if kv is ("max-frame-size", UInt32(v)) {
+        max_frame_size = v
+      }
+    }
+    assert_eq(max_frame_size, 1024)
+    writer.write(
+      @spop.encode_frame(@spop.Frame::disconnect(HAProxyDisconnect, Normal, "")),
+    )
+    expect_disconnect(read_frame(reader), Normal)
+  })
+}
+
+///|
 async test "aborted notify gets an empty ack without invoking handlers" {
   let calls : Ref[Int] = Ref(0)
   let agent = @agent.Agent::new().on("m", fn(_) {

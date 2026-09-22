@@ -138,7 +138,8 @@ async fn Session::serve(
   send(
     @spop.Frame::hello(AgentHello, [
       ("version", Str(version)),
-      ("max-frame-size", UInt32(self.agent.max_frame_size)),
+      // The spec requires the lower of both announced max-frame-size values.
+      ("max-frame-size", UInt32(negotiated)),
       ("capabilities", Str(self.agent.capabilities.join(", "))),
     ]),
   )
