@@ -25,8 +25,8 @@ MoonBit 实现的 SPOA（Stream Processing Offload Agent）库：HAProxy SPOE v1
 
 - 开发与本地验证环境为 **macOS arm64**、`moon 0.1.20260920`、`moonc v0.10.14+7d59c7ec9`。这些是已测试版本，尚未确定最低工具链版本。
 - 模块声明依赖 `moonbitlang/async@0.22.1`，默认使用 native 后端。native 构建需要 C 编译器与平台开发头文件。
-- server 的 C stub 使用 POSIX Unix socket API。**native 不代表支持所有操作系统**：本次发布审核尚未验证 Linux；当前 server 传输实现不支持 Windows。
-- 本地已验证 release 模式测试、文档生成、解压后的发布包，以及独立消费模块的 UDS 完整交互。本次发布审核尚未验证真实 HAProxy 互操作及 Linux CI。
+- server 的 C stub 使用 POSIX Unix socket API。**native 不代表支持所有操作系统**：Linux 已在 Ubuntu 24.04（x86_64）上完成验证；当前 server 传输实现不支持 Windows。
+- 本地已验证 release 模式测试、文档生成、解压后的发布包，以及独立消费模块的 UDS 完整交互。Linux 上已跑通完整测试套件，并与源码编译的 HAProxy 3.4.4 完成端到端互操作验证：TCP 与 UDS 两种传输、并发 pipelined 流量、`option spop-check` 健康检查（含 agent 宕机 fail-open）及 agent 重启重协商。Linux CI 尚未搭建。
 - 当前为初始 `0.1.0` 候选版本，上述检查不代表生产成熟度认证。
 
 ## 安装
@@ -196,7 +196,7 @@ HAProxy 中名为 `txn.ipbl.ip_blocked`（Bool）。注意 IPv6 地址在 agent 
 8 组十六进制形式比较，黑名单条目需写成如
 `2001:0db8:0000:0000:0000:0000:0000:0001` 的形式。
 
-验证步骤（本次发布审核尚未验证真实 HAProxy 互操作）：
+验证步骤（已在 Ubuntu 24.04 + HAProxy 3.4.4 实测通过）：
 
 ```bash
 # 终端 1：agent；本地演示可把 127.0.0.1 加入黑名单以观察 403

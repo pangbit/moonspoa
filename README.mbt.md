@@ -22,8 +22,8 @@ Import `spop` for codecs alone, `agent` or `client` for a custom transport, and 
 
 - Development and local validation used **macOS arm64**, `moon 0.1.20260920` and `moonc v0.10.14+7d59c7ec9`. These are tested versions, not an established minimum toolchain version.
 - The module declares `moonbitlang/async@0.22.1` and defaults to the native backend. Native builds require a C compiler and platform development headers.
-- The server's C stub uses POSIX Unix socket APIs. **Native does not imply support for every operating system**: Linux has not been validated in this release review; the current server transport does not support Windows.
-- Local validation covers release-mode tests, generated documentation, testing the extracted package, and an independent consumer's UDS round trip. Real HAProxy interoperability and Linux CI have not been verified in this release review.
+- The server's C stub uses POSIX Unix socket APIs. **Native does not imply support for every operating system**: Linux has been validated on Ubuntu 24.04 (x86_64); the current server transport does not support Windows.
+- Local validation covers release-mode tests, generated documentation, testing the extracted package, and an independent consumer's UDS round trip. On Linux, the full test suite passes, and end-to-end interoperability with HAProxy 3.4.4 (built from source) has been verified over both TCP and UDS transports, including concurrent pipelined traffic, `option spop-check` health checks with fail-open, and agent restarts. Linux CI has not been set up.
 - This is an initial `0.1.0` release candidate. The checks above are not a production-readiness certification.
 
 ## Installation
@@ -183,7 +183,7 @@ HAProxy sends `src` as an Ipv4/Ipv6 argument. The runnable server supports these
 
 The demo compares IPv6 addresses in full eight-group hexadecimal form; use blacklist entries such as `2001:0db8:0000:0000:0000:0000:0000:0001`.
 
-To try the configuration (this procedure is provided for verification; real HAProxy interoperability has not been validated in this release review):
+To try the configuration (verified end-to-end with HAProxy 3.4.4 on Ubuntu 24.04):
 
 ```bash
 # Terminal 1: block the local client's address
