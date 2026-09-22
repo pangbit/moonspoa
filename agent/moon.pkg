@@ -5,7 +5,7 @@
 warnings = "-79"
 
 import {
-  "yuebingo/spoa/spop",
+  "pangbit/moonspoa/spop",
   "moonbitlang/async",
   "moonbitlang/async/io",
 }

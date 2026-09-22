@@ -1,9 +1,9 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "yuebingo/spoa/agent"
+package "pangbit/moonspoa/agent"
 
 import {
   "moonbitlang/async/io",
-  "yuebingo/spoa/spop",
+  "pangbit/moonspoa/spop",
 }
 
 // Values

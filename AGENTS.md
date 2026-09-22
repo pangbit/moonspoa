@@ -33,9 +33,9 @@ strictly one-way, and each sub-package can be referenced independently:
   `moonbitlang/async/raw_fd`). UDS accept is poll-based (5 ms) because
   moonbitlang/async@0.22.1 exposes no public accept readiness API and its
   `internal/*` packages are not importable across modules.
-- Root package `yuebingo/spoa` — convenience re-exports of `spop` types
+- Root package `pangbit/moonspoa` — convenience re-exports of `spop` types
   and `agent`'s `Agent`/`Session` only (not `server`, not `client`).
-- `examples/` — separate module `yuebingo/spoa_examples` (linked via the
+- `examples/` — separate module `pangbit/moonspoa_examples` (linked via the
   root `moon.work`) holding the runnable demos: `examples/server` (demo
   agent server) and `examples/client` (demo SPOE client).
 

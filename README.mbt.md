@@ -1,8 +1,8 @@
-# yuebingo/spoa
+# pangbit/moonspoa
 
 English | [简体中文](README.zh-CN.md)
 
-A MoonBit SPOA (Stream Processing Offload Agent) library implementing the SPOP protocol described in HAProxy's SPOE v1.2 specification. It provides protocol codecs, agent sessions, TCP / Unix domain socket servers, and a SPOE client. The default backend is **native**. [Source repository](https://github.com/yuebingo/spoa).
+A MoonBit SPOA (Stream Processing Offload Agent) library implementing the SPOP protocol described in HAProxy's SPOE v1.2 specification. It provides protocol codecs, agent sessions, TCP / Unix domain socket servers, and a SPOE client. The default backend is **native**. [Source repository](https://github.com/pangbit/moonspoa).
 
 ## Packages
 
@@ -10,11 +10,11 @@ Packages have one-way dependencies and can be imported separately:
 
 | Package | Purpose | Dependencies |
 | --- | --- | --- |
-| `yuebingo/spoa/spop` | Protocol codecs and HELLO negotiation | MoonBit core only; backend independent |
-| `yuebingo/spoa/agent` | Agent configuration and session state machine | `spop`, async runtime and IO; caller supplies transport |
-| `yuebingo/spoa/client` | HELLO, sequential / pipelined NOTIFY, timeouts, DISCONNECT | `spop`, async runtime, IO and queues |
-| `yuebingo/spoa/server` | TCP and Unix domain socket transport | `agent`, async networking and a C stub; native only |
-| `yuebingo/spoa` | Convenience facade | Re-exports `spop` types and `agent`'s `Agent` / `Session`; **not** `server` or `client` |
+| `pangbit/moonspoa/spop` | Protocol codecs and HELLO negotiation | MoonBit core only; backend independent |
+| `pangbit/moonspoa/agent` | Agent configuration and session state machine | `spop`, async runtime and IO; caller supplies transport |
+| `pangbit/moonspoa/client` | HELLO, sequential / pipelined NOTIFY, timeouts, DISCONNECT | `spop`, async runtime, IO and queues |
+| `pangbit/moonspoa/server` | TCP and Unix domain socket transport | `agent`, async networking and a C stub; native only |
+| `pangbit/moonspoa` | Convenience facade | Re-exports `spop` types and `agent`'s `Agent` / `Session`; **not** `server` or `client` |
 
 Import `spop` for codecs alone, `agent` or `client` for a custom transport, and `server` for a ready-to-use listener.
 
@@ -24,7 +24,7 @@ Import `spop` for codecs alone, `agent` or `client` for a custom transport, and 
 - The module declares `moonbitlang/async@0.22.1` and defaults to the native backend. Native builds require a C compiler and platform development headers.
 - The server's C stub uses POSIX Unix socket APIs. **Native does not imply support for every operating system**: Linux has been validated on Ubuntu 24.04 (x86_64); the current server transport does not support Windows.
 - Manual validation covers release-mode tests, generated documentation, testing the extracted package, and an independent consumer's UDS round trip. On Linux, the full test suite passes, and end-to-end interoperability with HAProxy 3.4.4 (built from source) has been verified over both TCP and UDS transports, including concurrent pipelined traffic, `option spop-check` health checks with fail-open, and agent restarts.
-- GitHub Actions CI (`ubuntu-24.04`) is configured to check types, debug/release tests, formatting and generated interfaces. Its HAProxy 3.4 TCP smoke test checks denial, a 50-request concurrent burst, and forwarding after an agent restart. Documentation generation, extracted-package and independent-consumer checks, HAProxy-to-UDS interoperability, `spop-check`, and outage fail-open remain manual validation; they are not covered by this workflow. See [CI runs](https://github.com/yuebingo/spoa/actions/workflows/ci.yml) for results tied to a specific commit.
+- GitHub Actions CI (`ubuntu-24.04`) is configured to check types, debug/release tests, formatting and generated interfaces. Its HAProxy 3.4 TCP smoke test checks denial, a 50-request concurrent burst, and forwarding after an agent restart. Documentation generation, extracted-package and independent-consumer checks, HAProxy-to-UDS interoperability, `spop-check`, and outage fail-open remain manual validation; they are not covered by this workflow. See [CI runs](https://github.com/pangbit/moonspoa/actions/workflows/ci.yml) for results tied to a specific commit.
 - This is an initial `0.1.0` release candidate. The checks above are not a production-readiness certification.
 
 ## Installation
@@ -32,14 +32,14 @@ Import `spop` for codecs alone, `agent` or `client` for a custom transport, and 
 Once the module has been published to Mooncakes:
 
 ```bash
-moon add yuebingo/spoa
+moon add pangbit/moonspoa
 ```
 
-Before publication, clone this repository and run the examples through its `moon.work`. To use the source in another project, add both modules to a local workspace and declare `"yuebingo/spoa@0.1.0"` in the consumer's `moon.mod`.
+Before publication, clone this repository and run the examples through its `moon.work`. To use the source in another project, add both modules to a local workspace and declare `"pangbit/moonspoa@0.1.0"` in the consumer's `moon.mod`.
 
 ## Quick start
 
-For the executable examples, declare both `"yuebingo/spoa@0.1.0"` and `"moonbitlang/async@0.22.1"` in your module's `moon.mod`, and set `preferred_target = "native"`.
+For the executable examples, declare both `"pangbit/moonspoa@0.1.0"` and `"moonbitlang/async@0.22.1"` in your module's `moon.mod`, and set `preferred_target = "native"`.
 
 ### Agent server
 
@@ -47,8 +47,8 @@ For a native executable package, use this `moon.pkg`:
 
 ```text
 import {
-  "yuebingo/spoa/agent",
-  "yuebingo/spoa/server",
+  "pangbit/moonspoa/agent",
+  "pangbit/moonspoa/server",
   "moonbitlang/async",
 }
 supported_targets = "native"
@@ -84,7 +84,7 @@ The client executable's `moon.pkg`:
 
 ```text
 import {
-  "yuebingo/spoa/client",
+  "pangbit/moonspoa/client",
   "moonbitlang/async",
   "moonbitlang/async/socket",
 }
@@ -141,16 +141,16 @@ Oversized NOTIFY frames raise `SpopError(FrameTooBig)` before being written. Age
 
 ### Protocol types through the root facade
 
-Import `"yuebingo/spoa"` in `moon.pkg`:
+Import `"pangbit/moonspoa"` in `moon.pkg`:
 
 ```mbt check
 ///|
 test {
-  let message : @spoa.Message = {
+  let message : @moonspoa.Message = {
     name: "check-ip",
     args: [("ip", Str("1.2.3.4"))],
   }
-  let frame = @spoa.Frame::notify(0, 1, [message])
+  let frame = @moonspoa.Frame::notify(0, 1, [message])
   debug_inspect(frame.frame_type, content="Notify")
 }
 ```

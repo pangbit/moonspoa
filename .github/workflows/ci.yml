@@ -69,7 +69,7 @@ jobs:
       - name: Run backend, agent and HAProxy
         run: |
           python3 -m http.server 8000 >/tmp/backend.log 2>&1 &
-          stdbuf -oL -eL ./_build/native/debug/build/yuebingo/spoa_examples/server/server.exe \
+          stdbuf -oL -eL ./_build/native/debug/build/pangbit/moonspoa_examples/server/server.exe \
             --block 127.0.0.1 >/tmp/agent.log 2>&1 &
           echo $! > /tmp/agent.pid
           # Relax the localhost-tuned processing timeout; CI runners jitter.
@@ -116,7 +116,7 @@ jobs:
             sleep 1
           done
           # Default blacklist (203.0.113.7, ...) does not cover 127.0.0.1.
-          stdbuf -oL -eL ./_build/native/debug/build/yuebingo/spoa_examples/server/server.exe \
+          stdbuf -oL -eL ./_build/native/debug/build/pangbit/moonspoa_examples/server/server.exe \
             >/tmp/agent.log 2>&1 &
           echo $! > /tmp/agent.pid
           deadline=$((SECONDS + 30))

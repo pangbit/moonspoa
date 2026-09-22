@@ -9,13 +9,13 @@
 //   "moonbitlang/x@0.4.6",
 // }
 
-name = "yuebingo/spoa"
+name = "pangbit/moonspoa"
 
 version = "0.1.0"
 
 readme = "README.mbt.md"
 
-repository = "https://github.com/yuebingo/spoa"
+repository = "https://github.com/pangbit/moonspoa"
 
 license = "Apache-2.0"
 

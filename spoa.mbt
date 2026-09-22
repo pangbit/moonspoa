@@ -1,6 +1,6 @@
 ///|
 /// Re-export the SPOP protocol core types so that users can work with a
-/// single `@spoa` import.
+/// single `@moonspoa` import.
 pub using @spop {
   type Data,
   type VarScope,

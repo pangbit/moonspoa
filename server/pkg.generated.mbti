@@ -1,11 +1,11 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "yuebingo/spoa/server"
+package "pangbit/moonspoa/server"
 
 import {
   "moonbitlang/async/raw_fd",
   "moonbitlang/async/socket",
   "moonbitlang/core/debug",
-  "yuebingo/spoa/agent",
+  "pangbit/moonspoa/agent",
 }
 
 // Values

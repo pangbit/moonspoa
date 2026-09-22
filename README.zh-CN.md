@@ -1,8 +1,8 @@
-# yuebingo/spoa
+# pangbit/moonspoa
 
 [English](README.mbt.md) | 简体中文
 
-MoonBit 实现的 SPOA（Stream Processing Offload Agent）库：HAProxy SPOE v1.2 的 SPOP 协议编解码、agent 服务器（TCP / Unix domain socket）与 SPOE 客户端。目标后端：**native**。仓库托管于 <https://github.com/yuebingo/spoa>。
+MoonBit 实现的 SPOA（Stream Processing Offload Agent）库：HAProxy SPOE v1.2 的 SPOP 协议编解码、agent 服务器（TCP / Unix domain socket）与 SPOE 客户端。目标后端：**native**。仓库托管于 <https://github.com/pangbit/moonspoa>。
 
 ## 包结构与依赖层级
 
@@ -10,16 +10,16 @@ MoonBit 实现的 SPOA（Stream Processing Offload Agent）库：HAProxy SPOE v1
 
 | 包 | 用途 | 依赖 |
 | --- | --- | --- |
-| `yuebingo/spoa/spop` | 协议编解码与 HELLO 协商 | 仅 MoonBit core；后端无关 |
-| `yuebingo/spoa/agent` | Agent 配置与会话状态机 | `spop`、async 运行时及 IO；传输由调用方提供 |
-| `yuebingo/spoa/client` | HELLO、顺序 / pipelined NOTIFY、超时、DISCONNECT | `spop`、async 运行时、IO 与队列 |
-| `yuebingo/spoa/server` | TCP 与 Unix domain socket 传输 | `agent`、async 网络库与 C stub；仅 native |
-| `yuebingo/spoa` | 便捷入口 | 重导出 `spop` 类型及 `agent` 的 `Agent` / `Session`；**不包含** `server` 和 `client` |
+| `pangbit/moonspoa/spop` | 协议编解码与 HELLO 协商 | 仅 MoonBit core；后端无关 |
+| `pangbit/moonspoa/agent` | Agent 配置与会话状态机 | `spop`、async 运行时及 IO；传输由调用方提供 |
+| `pangbit/moonspoa/client` | HELLO、顺序 / pipelined NOTIFY、超时、DISCONNECT | `spop`、async 运行时、IO 与队列 |
+| `pangbit/moonspoa/server` | TCP 与 Unix domain socket 传输 | `agent`、async 网络库与 C stub；仅 native |
+| `pangbit/moonspoa` | 便捷入口 | 重导出 `spop` 类型及 `agent` 的 `Agent` / `Session`；**不包含** `server` 和 `client` |
 
-- 只要编解码：引 `yuebingo/spoa/spop`；
-- 自己接网络：引 `yuebingo/spoa/agent`（或 `client`）；
-- 开箱即用的 TCP/UDS 服务器：引 `yuebingo/spoa/server`（**需单独 import**，根包不重导出它，因为它是 native-only 且依赖较重）；
-- 使用协议类型与 Agent/Session 的便捷入口：引根包 `yuebingo/spoa`。
+- 只要编解码：引 `pangbit/moonspoa/spop`；
+- 自己接网络：引 `pangbit/moonspoa/agent`（或 `client`）；
+- 开箱即用的 TCP/UDS 服务器：引 `pangbit/moonspoa/server`（**需单独 import**，根包不重导出它，因为它是 native-only 且依赖较重）；
+- 使用协议类型与 Agent/Session 的便捷入口：引根包 `pangbit/moonspoa`。
 
 ## 环境要求与验证状态
 
@@ -27,7 +27,7 @@ MoonBit 实现的 SPOA（Stream Processing Offload Agent）库：HAProxy SPOE v1
 - 模块声明依赖 `moonbitlang/async@0.22.1`，默认使用 native 后端。native 构建需要 C 编译器与平台开发头文件。
 - server 的 C stub 使用 POSIX Unix socket API。**native 不代表支持所有操作系统**：Linux 已在 Ubuntu 24.04（x86_64）上完成验证；当前 server 传输实现不支持 Windows。
 - 人工验证覆盖 release 模式测试、文档生成、解压后的发布包，以及独立消费模块的 UDS 完整交互。Linux 上已跑通完整测试套件，并与源码编译的 HAProxy 3.4.4 完成端到端互操作验证：TCP 与 UDS 两种传输、并发 pipelined 流量、`option spop-check` 健康检查（含 agent 宕机 fail-open）及 agent 重启重协商。
-- GitHub Actions CI（`ubuntu-24.04`）配置了类型检查、debug/release 测试、格式与生成接口检查。HAProxy 3.4 TCP 冒烟测试覆盖阻断、50 路并发请求及 agent 重启后的转发。文档生成、发布包解压与独立消费模块检查、HAProxy→UDS 互操作、`spop-check` 及宕机 fail-open 仍属于人工验证，不在此 workflow 的覆盖范围内。具体提交的执行结果见 [CI 运行记录](https://github.com/yuebingo/spoa/actions/workflows/ci.yml)。
+- GitHub Actions CI（`ubuntu-24.04`）配置了类型检查、debug/release 测试、格式与生成接口检查。HAProxy 3.4 TCP 冒烟测试覆盖阻断、50 路并发请求及 agent 重启后的转发。文档生成、发布包解压与独立消费模块检查、HAProxy→UDS 互操作、`spop-check` 及宕机 fail-open 仍属于人工验证，不在此 workflow 的覆盖范围内。具体提交的执行结果见 [CI 运行记录](https://github.com/pangbit/moonspoa/actions/workflows/ci.yml)。
 - 当前为初始 `0.1.0` 候选版本，上述检查不代表生产成熟度认证。
 
 ## 安装
@@ -35,14 +35,14 @@ MoonBit 实现的 SPOA（Stream Processing Offload Agent）库：HAProxy SPOE v1
 发布到 Mooncakes 后可使用：
 
 ```bash
-moon add yuebingo/spoa
+moon add pangbit/moonspoa
 ```
 
-发布前可克隆本仓库，通过其中的 `moon.work` 运行示例。其他项目若需引用源码，可将两个模块加入本地 workspace，并在消费方的 `moon.mod` 中声明 `"yuebingo/spoa@0.1.0"`。
+发布前可克隆本仓库，通过其中的 `moon.work` 运行示例。其他项目若需引用源码，可将两个模块加入本地 workspace，并在消费方的 `moon.mod` 中声明 `"pangbit/moonspoa@0.1.0"`。
 
 ## 快速上手
 
-可执行示例需要在模块的 `moon.mod` 中声明 `"yuebingo/spoa@0.1.0"` 和 `"moonbitlang/async@0.22.1"`，并设置 `preferred_target = "native"`。
+可执行示例需要在模块的 `moon.mod` 中声明 `"pangbit/moonspoa@0.1.0"` 和 `"moonbitlang/async@0.22.1"`，并设置 `preferred_target = "native"`。
 
 ### 运行一个 agent 服务器
 
@@ -50,8 +50,8 @@ moon add yuebingo/spoa
 
 ```text
 import {
-  "yuebingo/spoa/agent",
-  "yuebingo/spoa/server",
+  "pangbit/moonspoa/agent",
+  "pangbit/moonspoa/server",
   "moonbitlang/async",
 }
 supported_targets = "native"
@@ -87,7 +87,7 @@ async fn main {
 
 ```text
 import {
-  "yuebingo/spoa/client",
+  "pangbit/moonspoa/client",
   "moonbitlang/async",
   "moonbitlang/async/socket",
 }
@@ -144,16 +144,16 @@ async fn query_all(client : @client.Client, ips : Array[String]) -> Unit {
 
 ### 协议层单独使用（根包重导出）
 
-在 `moon.pkg` 中导入 `"yuebingo/spoa"`：
+在 `moon.pkg` 中导入 `"pangbit/moonspoa"`：
 
 ```mbt check
 ///|
 test {
-  let message : @spoa.Message = {
+  let message : @moonspoa.Message = {
     name: "check-ip",
     args: [("ip", Str("1.2.3.4"))],
   }
-  let frame = @spoa.Frame::notify(0, 1, [message])
+  let frame = @moonspoa.Frame::notify(0, 1, [message])
   debug_inspect(frame.frame_type, content="Notify")
 }
 ```

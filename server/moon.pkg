@@ -16,7 +16,7 @@ warnings = "-79"
 supported_targets = "native"
 
 import {
-  "yuebingo/spoa/agent",
+  "pangbit/moonspoa/agent",
   "moonbitlang/async",
   "moonbitlang/async/socket",
   "moonbitlang/async/raw_fd",
@@ -24,8 +24,8 @@ import {
 }
 
 import {
-  "yuebingo/spoa/client",
-  "yuebingo/spoa/spop",
+  "pangbit/moonspoa/client",
+  "pangbit/moonspoa/spop",
   "moonbitlang/async/fs",
   "moonbitlang/async/io",
 } for "test"

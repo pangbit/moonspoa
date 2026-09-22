@@ -1,13 +1,13 @@
 // Root package of the module: a convenience facade that re-exports the
-// SPOP protocol core (`yuebingo/spoa/spop`) and the agent session logic
-// (`yuebingo/spoa/agent`) for users who want everything from one import.
+// SPOP protocol core (`pangbit/moonspoa/spop`) and the agent session logic
+// (`pangbit/moonspoa/agent`) for users who want everything from one import.
 //
 // Deliberately NOT re-exported:
-// - `yuebingo/spoa/server` (TCP/UDS transport): native-only with heavier
+// - `pangbit/moonspoa/server` (TCP/UDS transport): native-only with heavier
 //   dependencies; import it explicitly where needed.
-// - `yuebingo/spoa/client` (SPOE client / test peer): import it explicitly.
+// - `pangbit/moonspoa/client` (SPOE client / test peer): import it explicitly.
 
 import {
-  "yuebingo/spoa/spop",
-  "yuebingo/spoa/agent",
+  "pangbit/moonspoa/spop",
+  "pangbit/moonspoa/agent",
 }
