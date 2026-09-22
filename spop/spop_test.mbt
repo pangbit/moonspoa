@@ -39,16 +39,16 @@ test "negative signed integers encode as 10-byte varints" {
   // complement UInt64 bit pattern before varint encoding.
   let encoded64 = @spop.encode_data(Int64(-1))
   assert_eq(encoded64.length(), 11) // 1 type byte + 10 varint bytes
-  assert_eq(encoded64[0], b'\x40')
+  assert_eq(encoded64[0], b'\x04')
   let encoded32 = @spop.encode_data(Int32(-1))
   assert_eq(encoded32.length(), 11)
-  assert_eq(encoded32[0], b'\x20')
+  assert_eq(encoded32[0], b'\x02')
   // While small non-negative values stay compact.
-  assert_eq(@spop.encode_data(Int32(1)), b"\x20\x01")
-  assert_eq(@spop.encode_data(UInt64(239)), b"\x50\xef")
+  assert_eq(@spop.encode_data(Int32(1)), b"\x02\x01")
+  assert_eq(@spop.encode_data(UInt64(239)), b"\x05\xef")
   assert_eq(@spop.encode_data(Null), b"\x00")
   assert_eq(@spop.encode_data(Bool(true)), b"\x11")
-  assert_eq(@spop.encode_data(Bool(false)), b"\x10")
+  assert_eq(@spop.encode_data(Bool(false)), b"\x01")
 }
 
 ///|
@@ -106,6 +106,30 @@ test "disconnect args roundtrip" {
   let args = @spop.disconnect_args(Timeout, "timed out")
   assert_eq(@spop.parse_disconnect_args(args), (Timeout, "timed out"))
   assert_eq(@spop.parse_disconnect_args([]), (UnknownError, ""))
+}
+
+///|
+test "decode real haproxy HAPROXY-HELLO bytes" {
+  // Captured from haproxy 3.4.4 over loopback (tcpdump). TYPED-DATA packs
+  // the type id in the LOW nibble (0x08 = STRING, 0x03 = UINT32) and flags
+  // in the high nibble — haproxy's SPOP_DATA_T_MASK is 0x0F and
+  // SPOP_DATA_FL_TRUE is 0x10 (include/haproxy/spoe-t.h).
+  let bytes : Bytes = b"\x00\x00\x00\x7b\x01\x00\x00\x00\x01\x00\x00\x12supported-versions\x08\x032.0\x0emax-frame-size\x03\xfc\xf0\x06\x0ccapabilities\x08\x0apipelining\x09engine-id\x08\x24c5eea4f8-f1e8-4cb3-b490-034ebe72b18d"
+  guard @spop.decode_frame(bytes[:]) is Some(frame) else {
+    fail("expected a complete frame")
+  }
+  assert_eq(frame.frame_type, HAProxyHello)
+  guard frame.payload is KeyValues(args) else { fail("expected key-values") }
+  let info = @spop.parse_hello_args(args)
+  assert_eq(info.versions, ["2.0"])
+  assert_eq(info.max_frame_size, 16380)
+  assert_eq(info.capabilities, ["pipelining"])
+  assert_eq(info.engine_id, Some("c5eea4f8-f1e8-4cb3-b490-034ebe72b18d"))
+  // Encoding typed data produces the same type bytes as haproxy.
+  assert_eq(@spop.encode_data(Str("2.0")), b"\x08\x032.0")
+  assert_eq(@spop.encode_data(UInt32(16380)), b"\x03\xfc\xf0\x06")
+  assert_eq(@spop.encode_data(Bool(false)), b"\x01")
+  assert_eq(@spop.encode_data(Bool(true)), b"\x11")
 }
 
 ///|

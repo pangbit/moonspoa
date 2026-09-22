@@ -105,11 +105,14 @@ fn Reader::read_string(self : Reader) -> String raise DecodeError {
 
 ///|
 /// Read a TYPED-DATA value (type byte followed by the value).
+/// The type byte packs the type id in the low nibble and flags in the high
+/// nibble (`type | flags << 4`, matching haproxy's `SPOP_DATA_T_MASK 0x0F` /
+/// `SPOP_DATA_FL_MASK 0xF0`); for `Bool` the truth value is flag 0x10.
 fn Reader::read_data(self : Reader) -> Data raise DecodeError {
   let type_byte = self.read_byte().to_int()
-  match type_byte >> 4 {
+  match type_byte & 0x0F {
     0 => Null
-    1 => Bool((type_byte & 1) == 1)
+    1 => Bool((type_byte & 0x10) == 0x10)
     2 => Int32(self.read_varint().reinterpret_as_int64().to_int())
     3 => UInt32(self.read_varint().to_uint())
     4 => Int64(self.read_varint().reinterpret_as_int64())
@@ -250,12 +253,13 @@ fn write_string(buf : Buffer, s : String) -> Unit {
 }
 
 ///|
-/// Write a TYPED-DATA value.
+/// Write a TYPED-DATA value. The type byte packs the type id in the low
+/// nibble and flags in the high nibble (`type | flags << 4`).
 fn write_data(buf : Buffer, data : Data) -> Unit raise SpopError {
-  let type_id = data.type_id() << 4
+  let type_id = data.type_id()
   match data {
     Null => buf.write_byte(type_id.to_byte())
-    Bool(v) => buf.write_byte((type_id | (if v { 1 } else { 0 })).to_byte())
+    Bool(v) => buf.write_byte((type_id | (if v { 0x10 } else { 0 })).to_byte())
     Int32(v) => {
       buf.write_byte(type_id.to_byte())
       write_varint(buf, v.to_int64().reinterpret_as_uint64())

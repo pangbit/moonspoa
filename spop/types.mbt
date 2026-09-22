@@ -4,8 +4,9 @@
 ///|
 /// A typed value carried by the SPOP protocol (TYPED-DATA).
 ///
-/// On the wire the type id occupies the high 4 bits of the first byte and
-/// the flags the low 4 bits; for `Bool` the truth value is flag bit 0.
+/// On the wire the type id occupies the low 4 bits of the first byte and
+/// the flags the high 4 bits; for `Bool` the truth value is flag 0x10
+/// (haproxy's `SPOP_DATA_FL_TRUE`).
 ///
 /// Signed integers (`Int32`/`Int64`) are encoded by reinterpreting their
 /// two's complement bit pattern as an unsigned 64-bit integer which is then
