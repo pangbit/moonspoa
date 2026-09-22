@@ -1,65 +1,104 @@
 # yuebingo/spoa
 
-MoonBit 实现的 SPOA（Stream Processing Offload Agent）库：HAProxy SPOE v1.2 的 SPOP 协议编解码、agent 服务器（TCP / Unix domain socket）与 SPOE 客户端。目标后端：**native**。仓库托管于 <https://github.com/yuebingo/spoa>。
+English | [简体中文](README.zh-CN.md)
 
-## 包结构与依赖层级
+A MoonBit SPOA (Stream Processing Offload Agent) library implementing the SPOP protocol described in HAProxy's SPOE v1.2 specification. It provides protocol codecs, agent sessions, TCP / Unix domain socket servers, and a SPOE client. The default backend is **native**. [Source repository](https://github.com/yuebingo/spoa).
 
-依赖方向严格单向，各子包可独立引用：
+## Packages
 
-```
-spop        协议编解码核心，零依赖、后端无关（不 import 任何异步/网络库）
-  ↑
-agent       agent 侧会话状态机（仅依赖 spop + moonbitlang/async/io，网络层由使用者注入）
-client      SPOE/engine 侧客户端（HELLO 协商、顺序/并发 pipelined NOTIFY、超时、优雅断开；也是测试对端）
-  ↑
-server      TCP / UDS 传输，native only（依赖 agent + moonbitlang/async）
+Packages have one-way dependencies and can be imported separately:
 
-yuebingo/spoa（根包）  便捷重导出 spop 核心类型 + agent 的 Agent/Session
-```
+| Package | Purpose | Dependencies |
+| --- | --- | --- |
+| `yuebingo/spoa/spop` | Protocol codecs and HELLO negotiation | MoonBit core only; backend independent |
+| `yuebingo/spoa/agent` | Agent configuration and session state machine | `spop`, async runtime and IO; caller supplies transport |
+| `yuebingo/spoa/client` | HELLO, sequential / pipelined NOTIFY, timeouts, DISCONNECT | `spop`, async runtime, IO and queues |
+| `yuebingo/spoa/server` | TCP and Unix domain socket transport | `agent`, async networking and a C stub; native only |
+| `yuebingo/spoa` | Convenience facade | Re-exports `spop` types and `agent`'s `Agent` / `Session`; **not** `server` or `client` |
 
-- 只要编解码：引 `yuebingo/spoa/spop`；
-- 自己接网络：引 `yuebingo/spoa/agent`（或 `client`）；
-- 开箱即用的 TCP/UDS 服务器：引 `yuebingo/spoa/server`（**需单独 import**，根包不重导出它，因为它是 native-only 且依赖较重）；
-- 一把全要：引根包 `yuebingo/spoa`。
+Import `spop` for codecs alone, `agent` or `client` for a custom transport, and `server` for a ready-to-use listener.
 
-## 安装
+## Requirements and validation status
+
+- Development and local validation used **macOS arm64**, `moon 0.1.20260920` and `moonc v0.10.14+7d59c7ec9`. These are tested versions, not an established minimum toolchain version.
+- The module declares `moonbitlang/async@0.22.1` and defaults to the native backend. Native builds require a C compiler and platform development headers.
+- The server's C stub uses POSIX Unix socket APIs. **Native does not imply support for every operating system**: Linux has not been validated in this release review; the current server transport does not support Windows.
+- Local validation covers release-mode tests, generated documentation, testing the extracted package, and an independent consumer's UDS round trip. Real HAProxy interoperability and Linux CI have not been verified in this release review.
+- This is an initial `0.1.0` release candidate. The checks above are not a production-readiness certification.
+
+## Installation
+
+Once the module has been published to Mooncakes:
 
 ```bash
-moon add yuebingo/spoa   # 发布到 mooncakes 之后可用
+moon add yuebingo/spoa
 ```
 
-发布前也可直接克隆本仓库，以本地路径（path dependency）方式引用。
+Before publication, clone this repository and run the examples through its `moon.work`. To use the source in another project, add both modules to a local workspace and declare `"yuebingo/spoa@0.1.0"` in the consumer's `moon.mod`.
 
-## 快速上手
+## Quick start
 
-### 运行一个 agent 服务器
+For the executable examples, declare both `"yuebingo/spoa@0.1.0"` and `"moonbitlang/async@0.22.1"` in your module's `moon.mod`, and set `preferred_target = "native"`.
+
+### Agent server
+
+For a native executable package, use this `moon.pkg`:
+
+```text
+import {
+  "yuebingo/spoa/agent",
+  "yuebingo/spoa/server",
+  "moonbitlang/async",
+}
+supported_targets = "native"
+pkgtype(kind: "executable")
+```
+
+Then add `main.mbt`:
 
 ```mbt nocheck
 ///|
 async fn main {
   let agent = @agent.Agent::new().on("check-ip", fn(msg) {
-    // msg.args 是有序的 (String, Data) 列表；HAProxy `args ip=src` 送来的是
-    // Ipv4/Ipv6 类型，这里演示 demo client 发来的 Str
+    // This minimal example accepts the demo client's string value.
+    // HAProxy's `args ip=src` sends Ipv4/Ipv6; see examples/server.
     guard msg.args is [("ip", Str(ip)), ..] else { return [] }
-    // 变量名不含作用域与前缀；HAProxy 侧最终为 txn.<var-prefix>.ip_blocked
+    // HAProxy adds the scope and configured variable prefix.
     [SetVar(Transaction, "ip_blocked", Bool(ip == "203.0.113.7"))]
   })
-  // TCP：Listener::tcp("127.0.0.1:12345")；UDS：@server.Unix("/tmp/spoa.sock")
   let server = @server.Server::bind(
     agent,
     @server.Listener::tcp("127.0.0.1:12345"),
   )
-  server.run() // 每个连接 spawn 一个会话，直到 close() 或 task group 取消
+  defer server.close()
+  server.run()
 }
 ```
 
-### 使用 client 主动访问 SPOA
+For a Unix socket, replace the TCP listener with `@server.Unix("/tmp/spoa.sock")`.
+
+### SPOE client
+
+The client executable's `moon.pkg`:
+
+```text
+import {
+  "yuebingo/spoa/client",
+  "moonbitlang/async",
+  "moonbitlang/async/socket",
+}
+supported_targets = "native"
+pkgtype(kind: "executable")
+```
+
+Then add `main.mbt`:
 
 ```mbt nocheck
 ///|
 async fn main {
   let conn = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:12345"))
-  let client = @client.Client::hello(conn, conn) // HELLO 握手 + 协商校验
+  defer conn.close()
+  let client = @client.Client::hello(conn, conn)
   let actions = client.notify_messages([
     { name: "check-ip", args: [("ip", Str("203.0.113.7"))], },
   ])
@@ -70,11 +109,11 @@ async fn main {
 }
 ```
 
-并发场景用 `with_pipelining` 开启 pipelined 模式（SPOE.txt 3.2.1）：内部启动专用读任务，
-按 (stream-id, frame-id) 把 ACK 分发给等待中的 `notify` 调用方，任意数量的任务可共享
-同一连接并发收发；ACK 乱序到达也能正确配对。对端未协商 pipelining 时自动退化为
-串行在飞，行为依然正确。`timeout` 参数（毫秒）可为单次 notify 设置超时，超时抛
-`SpopError(Timeout)`，连接保持可用：
+### Concurrent requests and timeouts
+
+Use `with_pipelining` to share a connection among concurrent callers. A dedicated reader dispatches ACKs by `(stream-id, frame-id)`, including out-of-order replies. If pipelining was not negotiated, an internal gate serializes requests in this scope. Outside the scope, use the client sequentially.
+
+The following helper uses the `client` and `async` imports from the client configuration above:
 
 ```mbt nocheck
 ///|
@@ -87,7 +126,7 @@ async fn query_all(client : @client.Client, ips : Array[String]) -> Unit {
             [{ name: "check-ip", args: [("ip", Str(ip))], }],
             timeout=1000,
           )
-          println("\{ip}: \{Repr(actions)}")
+          println("\{Repr(actions)}")
         })
       }
     })
@@ -95,10 +134,13 @@ async fn query_all(client : @client.Client, ips : Array[String]) -> Unit {
 }
 ```
 
-超过对端 max-frame-size 的 NOTIFY 在写出前本地抛 `SpopError(FrameTooBig)`；
-对端随时发来的 AGENT-DISCONNECT 会让在飞与后续的 notify 抛出其携带的状态码。
+`timeout` is measured in milliseconds and raises `SpopError(Timeout)`. A timeout while waiting for an ACK preserves partial read progress so the next read can resume; late ACKs for other IDs are discarded. Cancellation releases pending-request registrations and the serialization gate, and exiting `with_pipelining` resets its mode state. A timeout does not undo work already performed by the agent. I/O failures and disconnections still require application-level recovery.
 
-### 协议层单独使用（根包重导出）
+Oversized NOTIFY frames raise `SpopError(FrameTooBig)` before being written. Agent sessions enforce the negotiated frame-size limit and report oversized ACKs with a DISCONNECT. In pipelined mode, an AGENT-DISCONNECT propagates its status to pending and subsequent NOTIFY calls.
+
+### Protocol types through the root facade
+
+Import `"yuebingo/spoa"` in `moon.pkg`:
 
 ```mbt check
 ///|
@@ -112,71 +154,72 @@ test {
 }
 ```
 
-### 可运行示例
+## Runnable examples
+
+Run these from the repository root in separate terminals:
 
 ```bash
-# 终端 1：IP 黑名单 agent（默认 TCP 127.0.0.1:12345，--unix 可切 UDS，
-# --host 0.0.0.0 可接受其它机器上的 HAProxy 连接；
-# 默认黑名单为 192.0.2.1 / 198.51.100.23 / 203.0.113.7，
-# 每给一个 --block 追加一条，且整体替换默认名单）
+# Terminal 1: agent server
 moon run examples/server -- --port 12345 --block 203.0.113.7
-# 终端 2：demo client 传入待检测 IP（位置参数，缺省 203.0.113.7），
-# 发送 check-ip NOTIFY，打印 ACK 的 actions 与判定结论
+# Terminal 2: send an IP and print the ACK actions and verdict
 moon run examples/client -- --port 12345 203.0.113.7
 ```
 
-## 接入 HAProxy
+The server defaults to TCP `127.0.0.1:12345`. Use `--unix PATH` for UDS or `--host 0.0.0.0` to accept connections from other machines. Its default blacklist is `192.0.2.1`, `198.51.100.23`, and `203.0.113.7`; supplying one or more `--block IP` arguments replaces that list. The client defaults to IP `203.0.113.7` and also accepts `--unix PATH`.
 
-`examples/haproxy/` 提供了可直接运行的完整配置（同样以 IP 黑名单为例）：
+## HAProxy integration
 
-- `examples/haproxy/haproxy.cfg` — frontend `http-in` 通过
-  `filter spoe engine ipblacklist config spoe-ipblacklist.conf` 挂接 agent，
-  并以 `http-request deny deny_status 403 if { var(txn.ipbl.ip_blocked) -m bool }`
-  拦截命中黑名单的请求；未命中的请求转发到 `127.0.0.1:8000`；
-- `examples/haproxy/spoe-ipblacklist.conf` — SPOE agent 声明（关键片段）：
+[examples/haproxy/haproxy.cfg](examples/haproxy/haproxy.cfg) connects the `http-in` frontend to the agent using `filter spoe engine ipblacklist config spoe-ipblacklist.conf`. It denies requests when `txn.ipbl.ip_blocked` is true and forwards other requests to `127.0.0.1:8000`.
 
-```
+The message in [spoe-ipblacklist.conf](examples/haproxy/spoe-ipblacklist.conf) is:
+
+```text
 spoe-message check-ip
     args ip=src
     event on-frontend-http-request
 ```
 
-HAProxy 会把 `src` 以 Ipv4/Ipv6 类型作为 `ip` 参数发送 `check-ip` 消息；agent 回的
-`set-var` 动作中，变量名会被加上 `ipbl.` 前缀并置于作用域之后，即 `ip_blocked` 在
-HAProxy 中名为 `txn.ipbl.ip_blocked`（Bool）。注意 IPv6 地址在 agent 侧按完整
-8 组十六进制形式比较，黑名单条目需写成如
-`2001:0db8:0000:0000:0000:0000:0000:0001` 的形式。
+HAProxy sends `src` as an Ipv4/Ipv6 argument. The runnable server supports these types as well as the demo client's string values. HAProxy adds the configured `ipbl` prefix and transaction scope to the returned `ip_blocked` variable, producing `txn.ipbl.ip_blocked`.
 
-端到端演示：
+The demo compares IPv6 addresses in full eight-group hexadecimal form; use blacklist entries such as `2001:0db8:0000:0000:0000:0000:0000:0001`.
+
+To try the configuration (this procedure is provided for verification; real HAProxy interoperability has not been validated in this release review):
 
 ```bash
-# 终端 1：agent；本地演示可把 127.0.0.1 加入黑名单以观察 403
+# Terminal 1: block the local client's address
 moon run examples/server -- --block 127.0.0.1
-# 终端 2：haproxy（spoe 配置路径相对 examples/haproxy）
+# Terminal 2: paths in the HAProxy configuration are relative to this directory
 cd examples/haproxy && haproxy -f haproxy.cfg
-# 终端 3：命中黑名单 → 403；未命中 → 转发到 127.0.0.1:8000
-# （可用 python3 -m http.server 8000 充当后端，未启动时放行请求为 503，属预期）
+# Terminal 3: a matching address should receive 403
 curl -i http://127.0.0.1:8080/
 ```
 
-## 测试
+Allowed requests need a backend on port 8000; for a local demo, run `python3 -m http.server 8000`. Without it, forwarded requests receive 503.
+
+## Validation
 
 ```bash
-moon test        # 模块 preferred_target = native，直接跑即可
+moon check
+moon test                 # native is the module's preferred target
+moon test --release
+moon info
+moon fmt --check
+moon doc
+moon package --list       # inspect publication contents without uploading
 ```
 
-覆盖：varint 边界向量（逐字节对照 haproxy intops.h 算法）、typed-data 全类型 roundtrip、六种帧型 roundtrip 与错误路径、内存 duplex 上的 agent/client 会话级测试（含 client pipelined 并发、乱序 ACK、超时、异常断开）、真实 TCP 回环与 UDS 集成测试。
+Tests cover varint boundary and overflow cases, typed-data and frame round trips, malformed frames, in-memory agent/client sessions, pipelining, out-of-order ACKs, timeout/cancellation recovery, and real TCP loopback / UDS integration. Examples and non-test snippets above are marked `nocheck`; the root-facade test is executable documentation.
 
-## 限制与说明
+## Limitations
 
-- **pipelining 已支持**：agent 端并发处理在飞 NOTIFY（写方向加锁）；client 端 `with_pipelining` 作用域内可并发 notify,ACK 按 id 分发、乱序到达亦可配对；对端未协商 pipelining 时自动串行化在飞帧。
-- SPOP 的 fragmentation 与 async 能力已被上游废弃，不实现（收到无 FIN 的帧按规范回 `FragmentationNotSupported`）。
-- **UDS accept 为轮询实现**（默认 5ms 间隔）：moonbitlang/async@0.22.1 没有公开的 Unix socket API，且其 `internal/*` 包跨模块不可引用（toolchain 强制），因此 UDS 由 C stub 建 socket、经公开包 `raw_fd` 接入事件循环，accept 以短间隔轮询驱动。上游若开放公开 accept readiness API 可直接替换。
-- 依赖锁定 `moonbitlang/async@0.22.1`；`server` 包为 native only。
-- 有符号整数编码遵循 haproxy 约定：按二进制补码位型 reinterpret 为 UInt64 做 varint 编码（负数为 10 字节 varint），与 haproxy 互通。
+- The agent processes in-flight NOTIFY tasks with serialized writes. Client concurrency requires `with_pipelining`; negotiation falls back to serialized requests when needed.
+- Protocol fragmentation and the SPOP `async` capability are not implemented. Frames without FIN are rejected with `FragmentationNotSupported`. This is separate from ordinary transport reads splitting a frame into chunks, which the client handles.
+- UDS accept polls at a **5 ms interval**. With the declared async dependency, the transport uses a C stub and the public `raw_fd` API; it does not have an event-driven UDS accept implementation.
+- Signed values follow HAProxy's two's-complement-to-UInt64 varint convention; negative values use ten-byte varints.
+- See the platform and validation boundaries above before adopting the server in production.
 
-## 参考来源与许可
+## References and license
 
-- 协议依据 HAProxy 官方文档 [doc/SPOE.txt](https://github.com/haproxy/haproxy/blob/master/doc/SPOE.txt)（SPOE v1.2）实现。
-- varint 与数据类型编码行为参照 HAProxy 源码（`include/haproxy/intops.h`、`include/haproxy/spoe.h`）核对；本库为独立实现，未复制其代码。
-- 许可证：Apache-2.0，见 [LICENSE](LICENSE)。
+- Protocol reference: HAProxy [doc/SPOE.txt](https://github.com/haproxy/haproxy/blob/master/doc/SPOE.txt), SPOE v1.2.
+- Varint and typed-data encoding were checked against HAProxy's `include/haproxy/intops.h` and `include/haproxy/spoe.h`. This library is an independent implementation.
+- Licensed under Apache-2.0; see [LICENSE](LICENSE).
