@@ -78,13 +78,22 @@ jobs:
           docker run -d --name haproxy --network host \
             -v "$PWD/examples/haproxy:/work:ro" -w /work \
             haproxy:3.4 haproxy -db -f haproxy.cfg
-          sleep 3
 
       - name: Blacklisted client is denied (incl. a 50-way burst)
         run: |
-          # --retry-connrefused absorbs HAProxy container startup lag.
-          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-            --retry 5 --retry-connrefused --retry-delay 1 http://127.0.0.1:8080/)
+          deadline=$((SECONDS + 30))
+          code=000
+          until [ "$code" = 403 ]; do
+            kill -0 "$(cat /tmp/agent.pid)"
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
+              http://127.0.0.1:8080/) || code=000
+            if [ "$code" = 403 ]; then break; fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timed out waiting for HAProxy to deny the blacklisted client (HTTP $code)"
+              exit 1
+            fi
+            sleep 1
+          done
           test "$code" = 403
           for i in $(seq 1 50); do
             curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 http://127.0.0.1:8080/ &
@@ -95,13 +104,32 @@ jobs:
       - name: Allowed client is proxied to the backend
         run: |
           kill "$(cat /tmp/agent.pid)"
-          sleep 1
+          deadline=$((SECONDS + 30))
+          while ss -ltn 'sport = :12345' | grep -q LISTEN; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo 'Timed out waiting for the old agent listener to close'
+              exit 1
+            fi
+            sleep 1
+          done
           # Default blacklist (203.0.113.7, ...) does not cover 127.0.0.1.
           stdbuf -oL -eL ./_build/native/debug/build/yuebingo/spoa_examples/server/server.exe \
             >/tmp/agent.log 2>&1 &
           echo $! > /tmp/agent.pid
-          sleep 1
-          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/)
+          deadline=$((SECONDS + 30))
+          code=000
+          # HTTP 200 alone could be fail-open; require the new agent's verdict.
+          until [ "$code" = 200 ] && grep -q 'check-ip 127.0.0.1 -> allowed' /tmp/agent.log; do
+            kill -0 "$(cat /tmp/agent.pid)"
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
+              http://127.0.0.1:8080/) || code=000
+            if [ "$code" = 200 ] && grep -q 'check-ip 127.0.0.1 -> allowed' /tmp/agent.log; then break; fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timed out waiting for the restarted agent to allow the client (HTTP $code)"
+              exit 1
+            fi
+            sleep 1
+          done
           test "$code" = 200
           grep -q 'check-ip 127.0.0.1 -> allowed' /tmp/agent.log
 
