@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -73,8 +74,45 @@ int32_t spoa_uds_listen(moonbit_bytes_t path, int32_t backlog) {
     close(fd);
     return ret;
   }
-  // Remove a stale socket file left over by a previous run.
-  unlink((const char *)path);
+  // If the path is occupied, only a stale socket file left over by a
+  // previous run may be removed. A regular file (or anything else) is
+  // reported occupied without being touched, and so is a socket that
+  // still has a live listener: staleness is confirmed by a failed
+  // connect() before unlinking.
+  struct stat st;
+  if (lstat((const char *)path, &st) == 0) {
+    if (!S_ISSOCK(st.st_mode)) {
+      close(fd);
+      return -EADDRINUSE;
+    }
+    int probe = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (probe < 0) {
+      saved = errno;
+      close(fd);
+      return -saved;
+    }
+    int probe_ret = connect(probe, (struct sockaddr *)&addr, addrlen);
+    saved = errno;
+    close(probe);
+    if (probe_ret == 0) {
+      // A live listener answered; the path is still in service.
+      close(fd);
+      return -EADDRINUSE;
+    }
+    if (saved != ECONNREFUSED && saved != ENOENT) {
+      close(fd);
+      return -saved;
+    }
+    if (unlink((const char *)path) < 0) {
+      saved = errno;
+      close(fd);
+      return -saved;
+    }
+  } else if (errno != ENOENT) {
+    saved = errno;
+    close(fd);
+    return -saved;
+  }
   if (bind(fd, (struct sockaddr *)&addr, addrlen) < 0) {
     saved = errno;
     close(fd);

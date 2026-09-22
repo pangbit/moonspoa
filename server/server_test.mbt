@@ -76,13 +76,34 @@ async test "uds connect to a missing socket fails" {
 }
 
 ///|
-async test "uds listener removes a stale socket file on bind" {
-  let path = "/tmp/spoa-test-stale-\{@async.now()}.sock"
+async test "uds listener refuses to replace a live listener" {
+  let path = "/tmp/spoa-test-live-\{@async.now()}.sock"
   let server1 = @server.Server::bind(test_agent(), Unix(path))
   assert_true(@fs.exists(path))
-  // Binding the same path again unlinks the stale file first.
-  let server2 = @server.Server::bind(test_agent(), Unix(path))
-  server2.close()
-  assert_false(@fs.exists(path))
+  // The path is held by a live listener: a second bind must fail and
+  // leave the socket file in place.
+  try @server.Server::bind(test_agent(), Unix(path)) catch {
+    @server.UdsListen(..) => ()
+    err => fail("unexpected error: \{err}")
+  } noraise {
+    _ => fail("expected UdsListen")
+  }
+  assert_true(@fs.exists(path))
   server1.close()
+  assert_false(@fs.exists(path))
+}
+
+///|
+async test "uds listener refuses to overwrite a regular file" {
+  let path = "/tmp/spoa-test-file-\{@async.now()}.txt"
+  @fs.write_file(path, "important data")
+  try @server.Server::bind(test_agent(), Unix(path)) catch {
+    @server.UdsListen(..) => ()
+    err => fail("unexpected error: \{err}")
+  } noraise {
+    _ => fail("expected UdsListen")
+  }
+  // The file was neither deleted nor replaced.
+  assert_eq(@fs.read_file(path).text(), "important data")
+  @fs.remove(path)
 }

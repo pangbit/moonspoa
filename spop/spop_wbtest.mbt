@@ -62,3 +62,29 @@ test "varint decode with insufficient input returns None" {
   assert_eq(decode_varint([0xF0, 0x80]), None)
   assert_eq(decode_varint([0xF0, 0x80, 0x80]), None)
 }
+
+///|
+test "varint decode rejects overflow past 64 bits" {
+  // At byte index 9 the shift is 60, so only 4 bits of capacity remain;
+  // any byte >= 16 overflows instead of wrapping.
+  let overflowing : Array[Bytes] = [
+    // The audit vector: 9 x 0xFF then 0x7F used to wrap around.
+    [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F],
+    // One bit too many on the final byte.
+    [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x10],
+    // Continuation bit set where no further byte fits.
+    [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x8F],
+  ]
+  for bytes in overflowing {
+    try decode_varint(bytes) catch {
+      SpopError(code~, ..) => assert_eq(code, InvalidFrame)
+    } noraise {
+      _ => fail("expected InvalidFrame for overflowing varint")
+    }
+  }
+  // The largest legal 10-byte varint (UInt64::max) still decodes: its
+  // final byte is 15, exactly filling the remaining 4 bits.
+  let max = encode_varint(18446744073709551615)
+  assert_eq(max.length(), 10)
+  assert_eq(decode_varint(max), Some((18446744073709551615, 10)))
+}

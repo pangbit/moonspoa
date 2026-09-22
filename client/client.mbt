@@ -260,12 +260,12 @@ async fn Client::send_frame(self : Client, bytes : Bytes) -> Unit {
 /// agent; otherwise `SpopError` with `FrameTooBig` is raised before
 /// anything is written (fragmentation was removed from SPOP 2.0).
 ///
-/// In sequential mode (outside `Client::with_pipelining`) the ACK is read
-/// directly and must echo the request ids, or `SpopError` with
-/// `FrameIdNotFound` is raised. Inside `with_pipelining` the shared reader
-/// task dispatches the ACK by its ids; ids already in flight are rejected
-/// with `FrameIdNotFound`, and ACKs for unknown ids (e.g. arriving after a
-/// `timeout`) are silently ignored.
+/// In sequential mode (outside `Client::with_pipelining`) frames are read
+/// until the ACK echoing the request ids arrives; late ACKs of earlier
+/// timed-out NOTIFYs are discarded on the way. Inside `with_pipelining`
+/// the shared reader task dispatches the ACK by its ids; ids already in
+/// flight are rejected with `FrameIdNotFound`, and ACKs for unknown ids
+/// (e.g. arriving after a `timeout`) are silently ignored.
 ///
 /// `timeout` is in milliseconds; on expiry `SpopError` with `Timeout` is
 /// raised and the connection stays usable. An AGENT-DISCONNECT received
@@ -327,36 +327,7 @@ async fn Client::wait_ack(
   match self.pending {
     None => {
       self.send_frame(bytes)
-      let frame = self.read_frame()
-      match frame.frame_type {
-        Ack => {
-          if frame.stream_id != stream_id || frame.frame_id != frame_id {
-            raise @spop.SpopError::new(
-              FrameIdNotFound,
-              "ACK echoes (\{frame.stream_id}, \{frame.frame_id}), expected (\{stream_id}, \{frame_id})",
-            )
-          }
-          guard frame.payload is Actions(actions) else {
-            raise @spop.SpopError::new(InvalidFrame, "malformed ACK payload")
-          }
-          actions
-        }
-        AgentDisconnect => {
-          guard frame.payload is KeyValues(args) else {
-            raise @spop.SpopError::new(
-              InvalidFrame,
-              "malformed AGENT-DISCONNECT payload",
-            )
-          }
-          let (code, message) = @spop.parse_disconnect_args(args)
-          raise @spop.SpopError::new(code, message)
-        }
-        _ =>
-          raise @spop.SpopError::new(
-            InvalidFrame,
-            "expected ACK, got \{Repr(frame.frame_type)}",
-          )
-      }
+      self.wait_ack_sequential(stream_id, frame_id)
     }
     Some(pending) => {
       if self.terminal is Some(err) {
@@ -372,52 +343,76 @@ async fn Client::wait_ack(
           "frame id (\{stream_id}, \{frame_id}) is already in flight",
         )
       }
-      if self.gate is Some(gate) {
-        gate.acquire()
+      let gate = self.gate
+      if gate is Some(g) {
+        g.acquire()
       }
+      // Cancellation (e.g. from a notify `timeout`) is not catchable, so
+      // the cleanup must live in `defer` to run on every exit path.
+      defer (if gate is Some(g) { g.release() })
       let waiter : @aqueue.Queue[@spop.Frame] = @aqueue.Queue(
         kind=@aqueue.Unbounded,
       )
       pending[key] = waiter
-      let result : Result[Array[@spop.Action], Error] = Ok(
-        self.roundtrip(waiter, bytes),
-      ) catch {
-        e => Err(e)
+      defer pending.remove(key)
+      // The reader may have terminated between the checks at entry and
+      // our registration; re-check now that the waiter is visible to
+      // `terminate`.
+      if self.terminal is Some(err) {
+        raise err
       }
-      pending.remove(key)
-      if self.gate is Some(gate) {
-        gate.release()
+      if self.disconnect_waiter is Some(_) {
+        raise @spop.SpopError::new(Normal, "client is disconnecting")
       }
-      match result {
-        Ok(actions) => actions
-        Err(err) => raise err
+      self.send_frame(bytes)
+      let frame = waiter.get()
+      guard frame.payload is Actions(actions) else {
+        raise @spop.SpopError::new(InvalidFrame, "malformed ACK payload")
       }
+      actions
     }
   }
 }
 
 ///|
-/// The pipelined round trip: write the frame, wait for the reader task to
-/// deliver the ACK. The terminal-state checks are repeated here (after
-/// registration in `pending`) so a concurrently terminating reader cannot
-/// leave this waiter behind.
-async fn Client::roundtrip(
+/// Sequential-mode ACK wait: read frames until the ACK echoing
+/// (stream_id, frame_id) arrives. ACKs echoing other ids are late replies
+/// to earlier timed-out NOTIFYs and are discarded, so a `timeout` does
+/// not poison the connection.
+async fn Client::wait_ack_sequential(
   self : Client,
-  waiter : @aqueue.Queue[@spop.Frame],
-  bytes : Bytes,
+  stream_id : UInt64,
+  frame_id : UInt64,
 ) -> Array[@spop.Action] {
-  if self.terminal is Some(err) {
-    raise err
+  for ;; {
+    let frame = self.read_frame()
+    match frame.frame_type {
+      Ack =>
+        if frame.stream_id == stream_id && frame.frame_id == frame_id {
+          guard frame.payload is Actions(actions) else {
+            raise @spop.SpopError::new(InvalidFrame, "malformed ACK payload")
+          }
+          return actions
+        }
+      // else: a late ACK for a previously timed-out NOTIFY; discard it
+      // and keep reading.
+      AgentDisconnect => {
+        guard frame.payload is KeyValues(args) else {
+          raise @spop.SpopError::new(
+            InvalidFrame,
+            "malformed AGENT-DISCONNECT payload",
+          )
+        }
+        let (code, message) = @spop.parse_disconnect_args(args)
+        raise @spop.SpopError::new(code, message)
+      }
+      _ =>
+        raise @spop.SpopError::new(
+          InvalidFrame,
+          "expected ACK, got \{Repr(frame.frame_type)}",
+        )
+    }
   }
-  if self.disconnect_waiter is Some(_) {
-    raise @spop.SpopError::new(Normal, "client is disconnecting")
-  }
-  self.send_frame(bytes)
-  let frame = waiter.get()
-  guard frame.payload is Actions(actions) else {
-    raise @spop.SpopError::new(InvalidFrame, "malformed ACK payload")
-  }
-  actions
 }
 
 ///|
@@ -440,6 +435,13 @@ pub async fn[X] Client::with_pipelining(
   }
   let pending : Map[(UInt64, UInt64), @aqueue.Queue[@spop.Frame]] = Map([])
   self.pending = Some(pending)
+  // Cancellation is not catchable, so the mode state is reset via `defer`:
+  // the client falls back to sequential mode no matter how the scope exits.
+  defer {
+    self.pending = None
+    self.disconnect_waiter = None
+    self.stopping = false
+  }
   let result : Result[X, Error] = @async.with_task_group(group => {
     // no_wait: the reader loop never ends on its own; it is cancelled when
     // the group winds down (i.e. once `f` and the tasks it awaits are done).
@@ -455,9 +457,6 @@ pub async fn[X] Client::with_pipelining(
   }) catch {
     e => Err(e)
   }
-  self.pending = None
-  self.disconnect_waiter = None
-  self.stopping = false
   match result {
     Ok(value) => value
     Err(err) => raise err
@@ -607,17 +606,12 @@ pub async fn Client::disconnect(
         kind=@aqueue.Unbounded,
       )
       self.disconnect_waiter = Some(waiter)
-      let result : Result[@spop.Frame, Error] = try {
-        self.send_frame(bytes)
-        Ok(waiter.get())
-      } catch {
-        e => Err(e)
+      // Cancellation is not catchable; reset via `defer` on every exit.
+      defer {
+        self.disconnect_waiter = None
       }
-      self.disconnect_waiter = None
-      let frame = match result {
-        Ok(frame) => frame
-        Err(err) => raise err
-      }
+      self.send_frame(bytes)
+      let frame = waiter.get()
       guard frame.payload is KeyValues(args) else {
         raise @spop.SpopError::new(
           InvalidFrame,

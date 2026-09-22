@@ -12,7 +12,8 @@
 ///   `v = b0`, `shift = 4`, and for each following byte `b`:
 ///   `v += b << shift; shift += 7`, stopping at the first `b < 128`
 ///   (the high bit of `b` is NOT masked off, mirroring the `- 128` of the
-///   encoder).
+///   encoder). A byte whose value no longer fits in the remaining 64 bits
+///   is rejected as an overflow.
 
 ///|
 /// Encode `i` as a SPOP varint.
@@ -45,7 +46,8 @@ fn write_varint(buf : Buffer, i : UInt64) -> Unit {
 /// Returns the decoded value and the number of bytes consumed, or `None`
 /// if `bytes` does not yet contain a complete varint (the caller should
 /// read more data and retry). Raises `SpopError` with
-/// `StatusCode::InvalidFrame` if the varint is too long to fit in 64 bits.
+/// `StatusCode::InvalidFrame` if the varint is too long to fit in 64 bits
+/// or its bits would overflow past bit 63.
 pub fn decode_varint(bytes : BytesView) -> (UInt64, Int)? raise SpopError {
   if bytes.length() == 0 {
     return None
@@ -63,8 +65,13 @@ pub fn decode_varint(bytes : BytesView) -> (UInt64, Int)? raise SpopError {
     if shift >= 64 {
       raise SpopError::new(InvalidFrame, "varint too long")
     }
-    let b = bytes[i]
-    v += b.to_uint64() << shift
+    let b = bytes[i].to_uint64()
+    // The byte contributes 64 - shift fresh bits; anything beyond that
+    // would silently wrap (the encoder never produces such bytes).
+    if b >> (64 - shift) != 0 {
+      raise SpopError::new(InvalidFrame, "varint overflows 64 bits")
+    }
+    v += b << shift
     shift += 7
     if b < 128 {
       return Some((v, i + 1))

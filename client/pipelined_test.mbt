@@ -302,3 +302,130 @@ async test "disconnect in pipelined mode returns the agent reply" {
     })
   })
 }
+
+///|
+async test "notify timeout without pipelining releases the in-flight gate" {
+  // Regression test: cancellation is not catchable, so cleanup must run
+  // via `defer`; a leaked gate would make every later notify time out.
+  let (agent_reader, client_writer) = @io.pipe()
+  let (client_reader, agent_writer) = @io.pipe()
+  @async.with_task_group(group => {
+    group.spawn_bg(() => {
+      scripted_hello(agent_reader, agent_writer)
+      // Never ACK the first NOTIFY; ACK the second one.
+      ignore(read_raw_frame(agent_reader))
+      let second = read_raw_frame(agent_reader)
+      agent_writer.write(
+        @spop.encode_frame(
+          @spop.Frame::ack(second.stream_id, second.frame_id, [
+            SetVar(Process, "proc.order", Str("second")),
+          ]),
+        ),
+      )
+    })
+    // No pipelining negotiated: in-flight frames are serialized by a gate.
+    let client = @client.Client::hello(client_reader, client_writer, capabilities=[])
+    assert_false(client.pipelining())
+    client.with_pipelining(client => {
+      try client.notify_messages([{ name: "m", args: [], }], timeout=50) catch {
+        @spop.SpopError(code~, ..) => assert_eq(code, Timeout)
+        err => fail("unexpected error: \{err}")
+      } noraise {
+        _ => fail("expected Timeout")
+      }
+      // Would hang on the leaked gate and time out before the fix.
+      let actions = client.notify_messages(
+        [{ name: "m", args: [], }],
+        timeout=1000,
+      )
+      assert_eq(actions, [SetVar(Process, "proc.order", Str("second"))])
+    })
+  })
+}
+
+///|
+async test "with_pipelining is re-enterable after cancellation" {
+  // Regression test: a cancelled scope must reset the client's mode state
+  // via `defer`; otherwise re-entry raises "already in pipelining mode".
+  let (agent_reader, client_writer) = @io.pipe()
+  let (client_reader, agent_writer) = @io.pipe()
+  @async.with_task_group(group => {
+    group.spawn_bg(() => {
+      scripted_hello(agent_reader, agent_writer)
+      // Never ACK the first NOTIFY; ACK the second one.
+      ignore(read_raw_frame(agent_reader))
+      let second = read_raw_frame(agent_reader)
+      agent_writer.write(
+        @spop.encode_frame(
+          @spop.Frame::ack(second.stream_id, second.frame_id, [
+            SetVar(Process, "proc.ok", Bool(true)),
+          ]),
+        ),
+      )
+    })
+    let client = @client.Client::hello(client_reader, client_writer)
+    // Cancel the whole pipelined scope while a notify is in flight.
+    try
+      @async.with_timeout(50, () => {
+        client.with_pipelining(client => {
+          ignore(client.notify_messages([{ name: "m", args: [], }]))
+        })
+      })
+    catch {
+      @async.TimeoutError => ()
+      err => fail("unexpected error: \{err}")
+    } noraise {
+      _ => fail("expected TimeoutError")
+    }
+    // Re-entering must work, and the connection is still usable.
+    client.with_pipelining(client => {
+      let actions = client.notify_messages([{ name: "m", args: [], }])
+      assert_eq(actions, [SetVar(Process, "proc.ok", Bool(true))])
+    })
+  })
+}
+
+///|
+async test "sequential mode discards late acks of timed-out notifies" {
+  // Regression test: after a sequential-mode timeout the late ACK of the
+  // first NOTIFY must not be mistaken for the second one's reply.
+  let (agent_reader, client_writer) = @io.pipe()
+  let (client_reader, agent_writer) = @io.pipe()
+  @async.with_task_group(group => {
+    group.spawn_bg(() => {
+      scripted_hello(agent_reader, agent_writer)
+      let first = read_raw_frame(agent_reader)
+      // Wait for the first NOTIFY to time out client-side, then read the
+      // second one (the pipe is rendezvous-style: our late ACK below would
+      // deadlock against the client's own write if we wrote it first).
+      @async.sleep(150)
+      let second = read_raw_frame(agent_reader)
+      // The late ACK for the timed-out NOTIFY arrives first...
+      agent_writer.write(
+        @spop.encode_frame(
+          @spop.Frame::ack(first.stream_id, first.frame_id, [
+            SetVar(Process, "proc.order", Str("first")),
+          ]),
+        ),
+      )
+      // ...followed by the ACK the client is actually waiting for.
+      agent_writer.write(
+        @spop.encode_frame(
+          @spop.Frame::ack(second.stream_id, second.frame_id, [
+            SetVar(Process, "proc.order", Str("second")),
+          ]),
+        ),
+      )
+    })
+    let client = @client.Client::hello(client_reader, client_writer)
+    try client.notify_messages([{ name: "m", args: [], }], timeout=50) catch {
+      @spop.SpopError(code~, ..) => assert_eq(code, Timeout)
+      err => fail("unexpected error: \{err}")
+    } noraise {
+      _ => fail("expected Timeout")
+    }
+    // Used to raise FrameIdNotFound, mistaking the late ACK for ours.
+    let actions = client.notify_messages([{ name: "m", args: [], }])
+    assert_eq(actions, [SetVar(Process, "proc.order", Str("second"))])
+  })
+}

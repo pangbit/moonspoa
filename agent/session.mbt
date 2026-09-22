@@ -41,10 +41,11 @@ pub fn Session::peer_disconnect(self : Session) -> (@spop.StatusCode, String)? {
 }
 
 ///|
-/// Read one frame from `reader`, enforcing the configured max-frame-size.
-/// Raises `@io.ReaderClosed` on EOF, `SpopError` with `FrameTooBig` if the
-/// announced length exceeds the limit, and `SpopError` with `InvalidFrame`
-/// on malformed input.
+/// Read one frame from `reader`, enforcing the negotiated max-frame-size
+/// (which equals the configured own limit until the HELLO handshake
+/// completes). Raises `@io.ReaderClosed` on EOF, `SpopError` with
+/// `FrameTooBig` if the announced length exceeds the limit, and
+/// `SpopError` with `InvalidFrame` on malformed input.
 async fn Session::read_frame(
   self : Session,
   reader : &@io.Reader,
@@ -53,10 +54,10 @@ async fn Session::read_frame(
   guard @spop.decode_frame_length(header) is Some(len) else {
     raise @spop.SpopError::new(InvalidFrame, "invalid frame length prefix")
   }
-  if len > self.agent.max_frame_size {
+  if len > self.negotiated_max_frame_size {
     raise @spop.SpopError::new(
       FrameTooBig,
-      "frame length \{len} exceeds max-frame-size \{self.agent.max_frame_size}",
+      "frame length \{len} exceeds max-frame-size \{self.negotiated_max_frame_size}",
     )
   }
   let body = reader.read_exactly(len.reinterpret_as_int())
@@ -80,6 +81,15 @@ pub async fn Session::run(
   let write_mutex = @async.Mutex()
   let send = async fn(frame : @spop.Frame) -> Unit {
     let bytes = @spop.encode_frame(frame)
+    // FRAME-LENGTH (the 4-byte prefix) does not count towards the limit.
+    // DISCONNECT frames are small enough to always fit within the minimum
+    // of 256 bytes, so error reporting itself never trips this check.
+    if bytes.length() - 4 > self.negotiated_max_frame_size.reinterpret_as_int() {
+      raise @spop.SpopError::new(
+        FrameTooBig,
+        "outgoing \{Repr(frame.frame_type)} frame of \{bytes.length() - 4} bytes exceeds the negotiated max-frame-size \{self.negotiated_max_frame_size}",
+      )
+    }
     write_mutex.acquire()
     defer write_mutex.release()
     writer.write(bytes)

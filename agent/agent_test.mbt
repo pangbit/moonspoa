@@ -221,3 +221,44 @@ async test "aborted notify gets an empty ack without invoking handlers" {
     expect_disconnect(read_frame(reader), Normal)
   })
 }
+
+///|
+async test "receive side enforces the negotiated max-frame-size" {
+  // The peer announces 256, below the agent's own limit of 16380; the
+  // negotiated (smaller) value must be enforced for subsequent frames
+  // (SPOE.txt 3.2.5). Only the length prefix is written: the pipe is
+  // rendezvous-style and the agent must reject the frame from its header
+  // without reading the body.
+  with_agent(@agent.Agent::new(), (reader, writer) => {
+    writer.write(
+      @spop.encode_frame(
+        @spop.Frame::hello(HAProxyHello, @spop.hello_args(max_frame_size=256)),
+      ),
+    )
+    assert_eq(read_frame(reader).frame_type, AgentHello)
+    // Announce a frame of 300 bytes: under the agent's configured limit
+    // but over the negotiated 256.
+    writer.write(b"\x00\x00\x01\x2c")
+    expect_disconnect(read_frame(reader), FrameTooBig)
+  })
+}
+
+///|
+async test "oversized ack is replaced by a frame-too-big disconnect" {
+  // negotiated = min(256, 1024) = 256; the handler's 300-byte variable
+  // value would produce an ACK over the negotiated limit, so the session
+  // must report FrameTooBig instead of sending it.
+  let agent = @agent.Agent::new(max_frame_size=256).on("m", fn(_) {
+    [SetVar(Transaction, "txn.big", Str("x".repeat(300)))]
+  })
+  with_agent(agent, (reader, writer) => {
+    writer.write(
+      @spop.encode_frame(@spop.Frame::hello(HAProxyHello, agent_hello_args([]))),
+    )
+    assert_eq(read_frame(reader).frame_type, AgentHello)
+    writer.write(
+      @spop.encode_frame(@spop.Frame::notify(0, 1, [{ name: "m", args: [], }])),
+    )
+    expect_disconnect(read_frame(reader), FrameTooBig)
+  })
+}
