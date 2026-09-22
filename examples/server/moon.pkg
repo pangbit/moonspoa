@@ -2,7 +2,7 @@ supported_targets = "native"
 
 import {
   "yuebingo/spoa/agent",
-  "yuebingo/spoa/server",
+  "yuebingo/spoa/server" @transport,
   "moonbitlang/async",
   "moonbitlang/core/env",
   "moonbitlang/core/string",

@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "yuebingo/spoa/cmd/client"
+package "yuebingo/spoa_examples/server"
 
 // Values
 

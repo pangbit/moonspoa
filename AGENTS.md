@@ -31,7 +31,9 @@ strictly one-way, and each sub-package can be referenced independently:
   `internal/*` packages are not importable across modules.
 - Root package `yuebingo/spoa` — convenience re-exports of `spop` types
   and `agent`'s `Agent`/`Session` only (not `server`, not `client`).
-- `cmd/main` — demo agent server; `cmd/client` — demo SPOE client.
+- `examples/` — separate module `yuebingo/spoa_examples` (linked via the
+  root `moon.work`) holding the runnable demos: `examples/server` (demo
+  agent server) and `examples/client` (demo SPOE client).
 
 New packages in this module should set `warnings = "-79"` in `moon.pkg`:
 warning 79 (implicit_impl_as_method) fires on every `derive(...)` of a

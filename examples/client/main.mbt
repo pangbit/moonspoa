@@ -1,8 +1,8 @@
 ///|
-/// Demo SPOE client: connects to the demo agent (`cmd/main`), sends one
+/// Demo SPOE client: connects to the demo agent (`examples/server`), sends one
 /// "check-ip" NOTIFY and prints the actions of the ACK.
 ///
-/// Usage: `moon run cmd/client -- [--port N] [--unix PATH]`
+/// Usage: `moon run examples/client -- [--port N] [--unix PATH]`
 /// Defaults to TCP 127.0.0.1:12345.
 
 ///|

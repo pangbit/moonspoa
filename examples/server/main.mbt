@@ -1,7 +1,7 @@
 ///|
 /// Demo SPOA agent server.
 ///
-/// Usage: `moon run cmd/main -- [--port N] [--unix PATH]`
+/// Usage: `moon run examples/server -- [--port N] [--unix PATH]`
 /// Defaults to TCP 127.0.0.1:12345.
 
 ///|
@@ -48,13 +48,13 @@ async fn main {
   let listener = match unix {
     Some(path) => {
       println("SPOA demo agent listening on unix:\{path}")
-      @server.Unix(path)
+      @transport.Unix(path)
     }
     None => {
       println("SPOA demo agent listening on 127.0.0.1:\{port}")
-      @server.Listener::tcp("127.0.0.1:\{port}")
+      @transport.Listener::tcp("127.0.0.1:\{port}")
     }
   }
-  let server = @server.Server::bind(demo_agent(), listener)
+  let server = @transport.Server::bind(demo_agent(), listener)
   server.run()
 }

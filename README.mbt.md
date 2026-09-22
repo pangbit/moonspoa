@@ -88,9 +88,9 @@ test {
 
 ```bash
 # 终端 1：demo agent（默认 TCP 127.0.0.1:12345，--unix 可切 UDS）
-moon run cmd/main -- --port 12345
+moon run examples/server -- --port 12345
 # 终端 2：demo client，发一条 check-ip NOTIFY 并打印 ACK 的 actions
-moon run cmd/client -- --port 12345
+moon run examples/client -- --port 12345
 ```
 
 ## HAProxy 侧配置示例
