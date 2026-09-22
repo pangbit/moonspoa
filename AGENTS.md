@@ -70,6 +70,13 @@ notice, not a defect.
   format the code. Check the diffs of `.mbti` file to see if the changes are
   expected.
 
+- GitHub Actions CI (`.github/workflows/ci.yml`) runs `moon check`,
+  `moon test` (debug and release), `moon fmt --check` and an up-to-date
+  `moon info` check on `ubuntu-24.04`, plus an HAProxy 3.4 interoperability
+  smoke test that runs the demo agent against the official `haproxy:3.4`
+  Docker image (the apt HAProxy on Ubuntu 24.04 is 2.8 and lacks
+  `mode spop`).
+
 - Run `moon test` to check tests pass. MoonBit supports snapshot testing; when
   changes affect outputs, run `moon test --update` to refresh snapshots.
   This module's `preferred_target` is `native`, so plain `moon test` runs

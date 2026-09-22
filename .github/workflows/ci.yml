@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: build and test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> $GITHUB_PATH
+
+      - name: Update MoonBit dependencies
+        run: |
+          moon version --all
+          moon update
+
+      - name: moon check
+        run: moon check
+
+      - name: moon test (debug)
+        run: moon test
+
+      - name: moon test (release)
+        run: moon test --release
+
+      - name: moon fmt --check
+        run: moon fmt --check
+
+      - name: Generated interfaces are up to date
+        run: |
+          moon info
+          git diff --exit-code
+
+  haproxy-integration:
+    # Ubuntu 24.04's apt HAProxy (2.8) has no `mode spop` (added in 2.9),
+    # so the engine runs from the official Docker image on the host network.
+    name: HAProxy 3.4 interoperability
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> $GITHUB_PATH
+
+      - name: Build the demo agent
+        run: |
+          moon update
+          moon build
+
+      - name: Pull the HAProxy image
+        run: docker pull haproxy:3.4
+
+      - name: Run backend, agent and HAProxy
+        run: |
+          python3 -m http.server 8000 >/tmp/backend.log 2>&1 &
+          stdbuf -oL -eL ./_build/native/debug/build/yuebingo/spoa_examples/server/server.exe \
+            --block 127.0.0.1 >/tmp/agent.log 2>&1 &
+          echo $! > /tmp/agent.pid
+          # Relax the localhost-tuned processing timeout; CI runners jitter.
+          sed -i 's/timeout processing 10ms/timeout processing 2s/' \
+            examples/haproxy/spoe-ipblacklist.conf
+          docker run -d --name haproxy --network host \
+            -v "$PWD/examples/haproxy:/work:ro" -w /work \
+            haproxy:3.4 haproxy -db -f haproxy.cfg
+          sleep 3
+
+      - name: Blacklisted client is denied (incl. a 50-way burst)
+        run: |
+          # --retry-connrefused absorbs HAProxy container startup lag.
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            --retry 5 --retry-connrefused --retry-delay 1 http://127.0.0.1:8080/)
+          test "$code" = 403
+          for i in $(seq 1 50); do
+            curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 http://127.0.0.1:8080/ &
+          done | sort | uniq -c | tee /tmp/burst.txt
+          grep -Eq '^ +50 403$' /tmp/burst.txt
+          grep -q 'check-ip 127.0.0.1 -> blocked' /tmp/agent.log
+
+      - name: Allowed client is proxied to the backend
+        run: |
+          kill "$(cat /tmp/agent.pid)"
+          sleep 1
+          # Default blacklist (203.0.113.7, ...) does not cover 127.0.0.1.
+          stdbuf -oL -eL ./_build/native/debug/build/yuebingo/spoa_examples/server/server.exe \
+            >/tmp/agent.log 2>&1 &
+          echo $! > /tmp/agent.pid
+          sleep 1
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/)
+          test "$code" = 200
+          grep -q 'check-ip 127.0.0.1 -> allowed' /tmp/agent.log
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo '=== agent.log ==='; cat /tmp/agent.log || true
+          echo '=== haproxy ==='; docker logs haproxy 2>&1 || true
+          echo '=== backend.log ==='; cat /tmp/backend.log || true
